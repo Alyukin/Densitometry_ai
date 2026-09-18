@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+backend/data/
+backend/app/static/docs/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Runtime data / secrets
+data/
+.env
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,60 @@
+# Совместимо с любым Docker Compose v2.
+# Настройки берутся из файла .env рядом с этим файлом (необязателен — есть значения по умолчанию).
+
+services:
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    image: densitometry-backend:0.1.0
+    environment:
+      DATA_DIR: /data
+      APP_NAME: "${APP_NAME:-Densitometry AI}"
+      ENVIRONMENT: "${ENVIRONMENT:-production}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      DATABASE_URL: "${DATABASE_URL:-}"
+      MAX_UPLOAD_SIZE_MB: "${MAX_UPLOAD_SIZE_MB:-1024}"
+      MAX_FILES_PER_UPLOAD: "${MAX_FILES_PER_UPLOAD:-500}"
+      MAX_IMAGES_PER_STUDY: "${MAX_IMAGES_PER_STUDY:-3}"
+      PROCESSOR_BACKEND: "${PROCESSOR_BACKEND:-mock}"
+      WORKER_CONCURRENCY: "${WORKER_CONCURRENCY:-2}"
+      PROCESSING_TIMEOUT_SEC: "${PROCESSING_TIMEOUT_SEC:-180}"
+      MOCK_DELAY_PER_IMAGE_SEC: "${MOCK_DELAY_PER_IMAGE_SEC:-1.5}"
+      MOCK_SEED: "${MOCK_SEED:-42}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}"
+    volumes:
+      - densitometry-data:/data
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    # Для GPU-модели на следующем этапе:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  frontend:
+    build:
+      context: ./frontend
+    image: densitometry-frontend:0.1.0
+    environment:
+      BACKEND_URL: http://backend:8000
+      CLIENT_MAX_BODY_SIZE: "${MAX_UPLOAD_SIZE_MB:-1024}m"
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  densitometry-data:
