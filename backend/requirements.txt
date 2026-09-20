@@ -11,5 +11,6 @@ pylibjpeg==2.1.0
 pylibjpeg-libjpeg==2.4.0
 pylibjpeg-openjpeg==2.5.0
 numpy==2.4.6
+scipy==1.17.1
 pillow==12.3.0
 openpyxl==3.1.5

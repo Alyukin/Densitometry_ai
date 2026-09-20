@@ -1,0 +1,44 @@
+#!/bin/sh
+# Как nginx находит backend. Скрипт выполняется до рендеринга шаблона конфига.
+#
+# 1. DNS. Штатный скрипт образа 15-local-resolvers.envsh кладёт в NGINX_LOCAL_RESOLVERS
+#    серверы из /etc/resolv.conf самого контейнера. Берём их: адрес встроенного DNS
+#    зависит от установки (у Docker это обычно 127.0.0.11, у Podman — адрес шлюза
+#    сети), и жёстко прописанный 127.0.0.11 в части окружений отвечает SERVFAIL.
+#
+# 2. /etc/hosts. Резолвер nginx работает только по DNS и записи из /etc/hosts не видит.
+#    Поэтому если имя backend прописано там (так работает extra_hosts, в том числе
+#    host.docker.internal), подставляем в адрес сразу IP. Это запасной путь для
+#    окружений, где DNS между контейнерами не работает вовсе: nginx тогда вообще ни у
+#    кого ничего не спрашивает.
+#
+# Явно заданные NGINX_RESOLVER и BACKEND_URL имеют приоритет над автоопределением.
+
+if [ -z "$NGINX_RESOLVER" ] || [ "$NGINX_RESOLVER" = "auto" ]; then
+    NGINX_RESOLVER="${NGINX_LOCAL_RESOLVERS:-127.0.0.11}"
+fi
+export NGINX_RESOLVER
+
+_rest=${BACKEND_URL#*://}
+_scheme=${BACKEND_URL%%://*}
+_hostport=${_rest%%/*}
+_port=""
+case "$_hostport" in
+    *:*) _port=":${_hostport##*:}"; _host=${_hostport%%:*} ;;
+    *)   _host=$_hostport ;;
+esac
+
+case "$_host" in
+    # уже IP-адрес — резолвить нечего
+    *[!0-9.]*)
+        _ip=$(awk -v h="$_host" '$1 !~ /^#/ { for (i = 2; i <= NF; i++) if ($i == h) { print $1; exit } }' /etc/hosts)
+        if [ -n "$_ip" ]; then
+            BACKEND_URL="${_scheme}://${_ip}${_port}"
+            export BACKEND_URL
+            echo "16-resolver.envsh: ${_host} найден в /etc/hosts -> ${_ip}"
+        fi
+        ;;
+esac
+
+# Одна строка в журнале, по которой сразу видно, куда пойдут запросы и через какой DNS
+echo "16-resolver.envsh: backend = ${BACKEND_URL}, DNS = ${NGINX_RESOLVER}"

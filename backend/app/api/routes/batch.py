@@ -64,6 +64,10 @@ def batch_download(
     db: DbDep,
     study_ids: Annotated[list[str] | None, Query()] = None,
     format: Annotated[Literal["csv", "xlsx"], Query()] = "csv",  # noqa: A002
+    source: Annotated[
+        Literal["auto", "reviewed"],
+        Query(description="auto — вердикт сервиса (по умолчанию), reviewed — решение специалиста"),
+    ] = "auto",
 ) -> Response:
     q = select(Study).options(selectinload(Study.results)).order_by(Study.created_at)
     if study_ids:
@@ -73,7 +77,7 @@ def batch_download(
         raise HTTPException(status.HTTP_409_CONFLICT, "Нет обработанных исследований для выгрузки")
     results = [r for s in studies for r in s.results]
     is_mock = any(s.is_mock for s in studies)
-    content = export.to_csv(results) if format == "csv" else export.to_xlsx(results, is_mock)
+    content = export.to_csv(results, source) if format == "csv" else export.to_xlsx(results, is_mock, source)
     stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     return Response(
         content=content,

@@ -204,7 +204,7 @@ export function StudiesTable(p: Props) {
                     </div>
                   </td>
                   <td>
-                    <div className="quality-cell" title={s.is_mock && hasRes ? "Тестовый результат (mock)" : undefined}>
+                    <div className="quality-cell">
                       <QualityBadge quality={s.summary?.overall_quality} />
                     </div>
                   </td>

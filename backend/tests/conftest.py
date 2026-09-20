@@ -18,12 +18,12 @@ def samples(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return out
 
 
-@pytest.fixture()
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def _make_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str) -> Iterator[TestClient]:
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("DATABASE_URL", "")
     monkeypatch.setenv("MOCK_DELAY_PER_IMAGE_SEC", "0")
     monkeypatch.setenv("ENVIRONMENT", "test")
+    monkeypatch.setenv("PROCESSOR_BACKEND", backend)
     get_settings.cache_clear()
     reset_engine()
     reset_processor()
@@ -36,6 +36,18 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClie
     reset_engine()
     reset_processor()
     get_settings.cache_clear()
+
+
+@pytest.fixture()
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """Клиент на mock-процессоре: проверяется оркестрация, а не медицинская логика."""
+    yield from _make_client(tmp_path, monkeypatch, "mock")
+
+
+@pytest.fixture()
+def rb_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """Клиент на процессоре с правилами ТЗ."""
+    yield from _make_client(tmp_path, monkeypatch, "rulebased")
 
 
 def upload(client: TestClient, *paths: tuple[Path, str]):

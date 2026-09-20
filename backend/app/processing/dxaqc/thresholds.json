@@ -1,0 +1,143 @@
+{
+  "spine_iliac": {
+    "threshold": 1.531157786885246,
+    "soft_width": 0.38762926523394503,
+    "enabled": true,
+    "train_ba": 0.7736,
+    "source": "разметка",
+    "feature": "iliac_score",
+    "op": "<"
+  },
+  "spine_axis": {
+    "threshold": 1.8799651310999017,
+    "soft_width": 0.5033321605433777,
+    "enabled": true,
+    "train_ba": 0.7428,
+    "source": "разметка",
+    "feature": "axis_edge_deg",
+    "op": ">"
+  },
+  "spine_foreign": {
+    "threshold": 56.65000000000002,
+    "soft_width": 8.05833333333333,
+    "enabled": true,
+    "train_ba": 0.6612,
+    "source": "разметка",
+    "feature": "ridge_max",
+    "op": ">"
+  },
+  "spine_metal": {
+    "threshold": Infinity,
+    "soft_width": 0.001,
+    "enabled": false,
+    "train_ba": 0.5,
+    "source": "разметка",
+    "feature": "metal_area",
+    "op": ">"
+  },
+  "femur_ischium": {
+    "threshold": 0.024530030959752314,
+    "soft_width": 0.07732840509105988,
+    "enabled": true,
+    "train_ba": 0.5599,
+    "source": "разметка",
+    "feature": "ischium_score",
+    "op": "<"
+  },
+  "femur_rotation_low": {
+    "threshold": 0.15632294584500467,
+    "soft_width": 0.08805169218350889,
+    "enabled": false,
+    "train_ba": 0.585,
+    "source": "разметка",
+    "feature": "lt_prominence_rel",
+    "op": "<"
+  },
+  "femur_rotation_high": {
+    "threshold": 0.7038451612903242,
+    "soft_width": 0.08805169218350889,
+    "enabled": false,
+    "train_ba": 0.5117,
+    "source": "разметка",
+    "feature": "lt_prominence_rel",
+    "op": ">"
+  },
+  "femur_shaft_tilt": {
+    "threshold": 4.95997397536789,
+    "soft_width": 1.8819815452585897,
+    "enabled": true,
+    "train_ba": 0.6481,
+    "source": "разметка",
+    "feature": "shaft_deg",
+    "op": ">"
+  },
+  "femur_roi_vertical": {
+    "threshold": 2.541000000000001,
+    "soft_width": 1.8340000000000003,
+    "enabled": false,
+    "train_ba": 0.7411,
+    "source": "ТЗ",
+    "feature": "margin_min_vertical_cm",
+    "op": "<",
+    "threshold_tz": 3.0,
+    "note": "порог ТЗ = 3.0, рабочий порог подобран по разметке"
+  },
+  "femur_roi_horizontal": {
+    "threshold": 0.5303999999999999,
+    "soft_width": 0.5180000000000001,
+    "enabled": false,
+    "train_ba": 0.5656,
+    "source": "ТЗ",
+    "feature": "margin_min_horizontal_cm",
+    "op": "<",
+    "threshold_tz": 2.0,
+    "note": "порог ТЗ = 2.0, рабочий порог подобран по разметке"
+  },
+  "femur_roi_field": {
+    "threshold": 26.985000000000003,
+    "soft_width": 1.4874999999999996,
+    "enabled": true,
+    "train_ba": 0.8103,
+    "source": "разметка",
+    "feature": "field_h_cm",
+    "op": "<"
+  },
+  "spine_top_level": {
+    "threshold": 8.0,
+    "soft_width": 0.6666666666666666,
+    "enabled": true,
+    "decides": false,
+    "source": "разметка",
+    "feature": "vertebrae",
+    "op": ">"
+  },
+  "spine_axis_tz": {
+    "threshold": 5.0,
+    "soft_width": 0.5392193303745639,
+    "enabled": true,
+    "decides": false,
+    "source": "ТЗ",
+    "feature": "axis_tz_deg",
+    "op": ">",
+    "threshold_tz": 5.0,
+    "note": "порог ТЗ = 5.0, рабочий порог подобран по разметке"
+  },
+  "spine_axis_segment": {
+    "threshold": 4.136782293026649,
+    "soft_width": 1.6047363302524469,
+    "enabled": true,
+    "decides": false,
+    "source": "разметка",
+    "feature": "axis_segment_deg",
+    "op": ">"
+  },
+  "femur_troch": {
+    "threshold": 1.4544975744975743,
+    "soft_width": 0.14150643948484123,
+    "enabled": true,
+    "decides": false,
+    "source": "разметка",
+    "feature": "troch_visible",
+    "op": "<"
+  }
+}

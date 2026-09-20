@@ -11,8 +11,8 @@ export const STATUS_LABELS: Record<StudyStatus, string> = {
 export const ACTIVE: StudyStatus[] = ["queued", "processing"];
 export const isActive = (s: StudyStatus) => ACTIVE.includes(s);
 
-// NOTE: коды ниже соответствуют mock-процессору. После анализа разметки датасета
-// словарь нужно синхронизировать с реальными классами модели.
+// Процессор rulebased возвращает значения уже из закрытых списков заказчика —
+// их показываем как есть. Коды mock-процессора оставлены для обратной совместимости.
 export const REGION_LABELS: Record<string, string> = {
   lumbar_spine: "Поясничный отдел позвоночника",
   proximal_femur: "Проксимальный отдел бедра",
@@ -21,12 +21,18 @@ export const REGION_LABELS: Record<string, string> = {
 export const REGION_SHORT: Record<string, string> = {
   lumbar_spine: "Позвоночник",
   proximal_femur: "Бедро",
+  "Поясничный отдел позвоночника": "Позвоночник",
+  "Проксимальный отдел бедра": "Бедро",
 };
 
 export const QUALITY_LABELS: Record<string, string> = {
+  "0": "Качественное",
+  "1": "Есть нарушения",
   acceptable: "Качественное",
   unacceptable: "Есть нарушения",
 };
+
+export const isBadQuality = (q: string | null | undefined) => q === "1" || q === "unacceptable";
 
 export const VIOLATION_LABELS: Record<string, string> = {
   iliac_crest_not_visible: "Не видны верхние края подвздошных костей",

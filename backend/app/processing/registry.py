@@ -9,14 +9,19 @@ from collections.abc import Callable
 from app.core.config import Settings, get_settings
 from app.processing.base import BaseProcessor
 from app.processing.mock import MockProcessor
+from app.processing.rulebased import RuleBasedProcessor
 
 logger = logging.getLogger(__name__)
 
 ProcessorFactory = Callable[[Settings], BaseProcessor]
 
 _REGISTRY: dict[str, ProcessorFactory] = {
+    # Рабочий baseline: измерения по снимку + явные правила из ТЗ, без обучения.
+    "rulebased": lambda s: RuleBasedProcessor(thresholds_path=s.thresholds_path or None),
+    # Тестовые результаты без какой-либо обработки изображения.
     "mock": lambda s: MockProcessor(delay_per_image_sec=s.mock_delay_per_image_sec, seed=s.mock_seed),
-    # "dxa_qc": lambda s: DxaQualityModel(weights=s.model_weights_path, device=s.device),
+    # Обучаемая модель подключается сюда же и сравнивается с baseline на тех же метриках:
+    # "cnn": lambda s: DxaQualityModel(weights=s.model_weights_path, device=s.device),
 }
 
 _instance: BaseProcessor | None = None

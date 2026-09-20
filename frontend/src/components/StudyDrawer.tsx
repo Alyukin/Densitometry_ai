@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api } from "../api/client";
+import { ApiError, api, downloadFile } from "../api/client";
 import type { CheckDetail, ExportFormat, ResultRow, StudyDetail, StudyResult, StudySummary } from "../api/types";
 import {
   REGION_LABELS,
@@ -11,7 +11,7 @@ import {
   label,
   splitViolations,
 } from "../utils/format";
-import { MockBadge, ProgressBar, QualityBadge, StatusBadge } from "./Badges";
+import { ProgressBar, QualityBadge, StatusBadge } from "./Badges";
 import { IconAlert, IconCheck, IconClose, IconDownload, IconPlay, IconRefresh, IconTrash } from "./Icons";
 
 interface Props {
@@ -44,17 +44,178 @@ function formatCheckValue(c: CheckDetail): string | null {
   return String(v);
 }
 
-function ResultCard({ row, preview }: { row: ResultRow; preview: string | null }) {
+// Закрытые списки заказчика — те же, что проверяет backend перед сохранением правки.
+const ALLOWED_VIOLATIONS: Record<string, string[]> = {
+  "Поясничный отдел позвоночника": [
+    "Некорректная укладка",
+    "Не выравнена ось позвоночника",
+    "Присутствуют посторонние предметы",
+  ],
+  "Проксимальный отдел бедра": ["Некорректная укладка", "Некорректная область интереса"],
+};
+
+function ReviewBlock({
+  studyId,
+  row,
+  onReviewed,
+}: {
+  studyId: string;
+  row: ResultRow;
+  onReviewed: () => void;
+}) {
+  const allowed = ALLOWED_VIOLATIONS[row.anatomical_region ?? ""] ?? [];
+  const [editing, setEditing] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [who, setWho] = useState("");
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (row.processing_status !== "success" || allowed.length === 0) return null;
+
+  const send = async (body: Parameters<typeof api.review>[2]) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.review(studyId, row.image_id ?? "", body);
+      setEditing(false);
+      onReviewed();
+    } catch (e) {
+      setErr((e as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startEdit = () => {
+    setPicked(splitViolations(row.reviewed_violation_type ?? row.violation_type));
+    setWho(row.reviewed_by ?? "");
+    setComment(row.review_comment ?? "");
+    setEditing(true);
+  };
+
+  const statusText =
+    row.review_status === "confirmed"
+      ? "Вердикт подтверждён"
+      : row.review_status === "corrected"
+        ? "Вердикт исправлен специалистом"
+        : null;
+
+  return (
+    <div className={`review${row.review_status ? " review--done" : ""}`}>
+      {statusText && (
+        <div className="review__status">
+          <IconCheck size={13} /> {statusText}
+          {row.reviewed_by ? ` · ${row.reviewed_by}` : ""}
+          {row.reviewed_at ? ` · ${formatDate(row.reviewed_at)}` : ""}
+          {row.review_status === "corrected" && (
+            <div className="check__note">
+              Итог врача: {row.reviewed_quality_class === "1" ? "есть нарушения" : "годно"}
+              {row.reviewed_violation_type ? ` — ${row.reviewed_violation_type}` : ""}
+            </div>
+          )}
+          {row.review_comment && <div className="check__note">«{row.review_comment}»</div>}
+        </div>
+      )}
+
+      {!editing && (
+        <div className="review__actions">
+          {!row.review_status && (
+            <button className="btn btn--sm btn--ghost" disabled={busy} onClick={() => void send({ action: "confirm" })}>
+              Подтвердить
+            </button>
+          )}
+          <button className="btn btn--sm btn--ghost" disabled={busy} onClick={startEdit}>
+            {row.review_status ? "Изменить" : "Исправить"}
+          </button>
+          {row.review_status && (
+            <button className="btn btn--sm btn--ghost" disabled={busy} onClick={() => void send({ action: "reset" })}>
+              Снять проверку
+            </button>
+          )}
+        </div>
+      )}
+
+      {editing && (
+        <div className="review__form">
+          <div className="review__hint">Отметьте нарушения, которые видите. Ничего не отмечено — исследование годно.</div>
+          {allowed.map((v) => (
+            <label key={v} className="review__check">
+              <input
+                type="checkbox"
+                checked={picked.includes(v)}
+                onChange={(e) => setPicked((p) => (e.target.checked ? [...p, v] : p.filter((x) => x !== v)))}
+              />
+              {label(VIOLATION_LABELS, v)}
+            </label>
+          ))}
+          <input
+            className="review__input"
+            placeholder="Кто проверил (необязательно)"
+            value={who}
+            onChange={(e) => setWho(e.target.value)}
+          />
+          <input
+            className="review__input"
+            placeholder="Комментарий (необязательно)"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+          />
+          <div className="review__actions">
+            <button
+              className="btn btn--sm btn--primary"
+              disabled={busy}
+              onClick={() =>
+                void send({ action: "correct", violation_type: picked, reviewed_by: who, comment })
+              }
+            >
+              Сохранить
+            </button>
+            <button className="btn btn--sm btn--ghost" disabled={busy} onClick={() => setEditing(false)}>
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+      {err && (
+        <div className="alert alert--error">
+          <IconAlert size={14} /> {err}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ResultCard({
+  studyId,
+  row,
+  preview,
+  overlayUrl,
+  onReviewed,
+}: {
+  studyId: string;
+  row: ResultRow;
+  preview: string | null;
+  overlayUrl: string | null;
+  onReviewed: () => void;
+}) {
   const violations = splitViolations(row.violation_type);
   const ok = row.processing_status === "success";
   const checks = row.details?.checks ?? [];
+  const [showOverlay, setShowOverlay] = useState(true);
+  const src = showOverlay && overlayUrl ? overlayUrl : preview;
   return (
     <article className={`result ${ok ? "" : "result--error"}`}>
       <div className="result__media">
-        {preview ? (
-          <img src={api.assetUrl(preview)} alt={row.original_filename ?? "preview"} loading="lazy" />
+        {src ? (
+          <img src={api.assetUrl(src)} alt={row.original_filename ?? "preview"} loading="lazy" />
         ) : (
           <div className="result__noimg">нет изображения</div>
+        )}
+        {overlayUrl && preview && (
+          <button type="button" className="result__toggle" onClick={() => setShowOverlay((v) => !v)}>
+            {showOverlay ? "Без разметки" : "С разметкой"}
+          </button>
         )}
       </div>
       <div className="result__body">
@@ -86,16 +247,33 @@ function ResultCard({ row, preview }: { row: ResultRow; preview: string | null }
 
         {checks.length > 0 && (
           <ul className="checks">
-            {checks.map((c) => {
-              const val = formatCheckValue(c);
-              return (
-                <li key={c.code} className={c.passed ? "check--ok" : "check--bad"}>
-                  <span className="check__icon">{c.passed ? <IconCheck size={13} /> : <IconClose size={13} />}</span>
-                  <span className="check__title">{c.title}</span>
-                  {val && <span className="check__val">{val}</span>}
-                </li>
-              );
-            })}
+            {[...checks]
+              .sort((a, b) => Number(a.decides === false) - Number(b.decides === false))
+              .map((c, i) => {
+                // rulebased отдаёт `fired` (нарушение найдено), mock — `passed` (проверка пройдена)
+                const bad = c.fired ?? c.passed === false;
+                const val = c.measured ?? formatCheckValue(c);
+                const info = c.decides === false;
+                const cls = info ? "check--info" : bad ? "check--bad" : "check--ok";
+                return (
+                  <li key={c.rule_id ?? c.code ?? i} className={cls}>
+                    <span className="check__icon">
+                      {info ? "·" : bad ? <IconClose size={13} /> : <IconCheck size={13} />}
+                    </span>
+                    <span className="check__title">{c.measured ? c.measured : c.title}</span>
+                    {!c.measured && val && <span className="check__val">{val}</span>}
+                    {c.criterion && (
+                      <span className="check__note" title={`Источник критерия: ${c.source ?? "—"}`}>
+                        {c.criterion}
+                        {c.tz_threshold != null && c.tz_fired != null && (
+                          <> · по букве ТЗ: {c.tz_fired ? "порог превышен" : "в норме"}</>
+                        )}
+                        {info && <> · справочно, в вердикт не входит</>}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
           </ul>
         )}
 
@@ -103,6 +281,8 @@ function ResultCard({ row, preview }: { row: ResultRow; preview: string | null }
           {row.confidence != null && <span>Уверенность: {(row.confidence * 100).toFixed(0)}%</span>}
           <span>Время: {formatSeconds(row.time_of_processing)}</span>
         </div>
+
+        <ReviewBlock studyId={studyId} row={row} onReviewed={onReviewed} />
       </div>
     </article>
   );
@@ -180,7 +360,6 @@ export function StudyDrawer({ studyId, summary, onClose, onProcess, onDownload, 
               <section className="panel">
                 <div className="panel__row">
                   <StatusBadge status={status} progress={progress} />
-                  {result?.is_mock && <MockBadge />}
                   <div className="spacer" />
                   <button className="btn btn--primary btn--sm" disabled={active} onClick={() => onProcess(d.id)}>
                     {d.status === "uploaded" ? <IconPlay size={14} /> : <IconRefresh size={14} />}
@@ -197,6 +376,15 @@ export function StudyDrawer({ studyId, summary, onClose, onProcess, onDownload, 
                   <dd>{formatDate(d.finished_at)}</dd>
                   <dt>Время обработки</dt>
                   <dd>{formatSeconds(d.processing_time_sec)}</dd>
+                  {result?.processor && (
+                    <>
+                      <dt>Обработано</dt>
+                      <dd className="mono">
+                        {result.processor}
+                        {result.processor_version ? ` ${result.processor_version}` : ""}
+                      </dd>
+                    </>
+                  )}
                 </dl>
                 {d.error_message && !active && (
                   <div className={`alert ${status === "failed" ? "alert--error" : "alert--warn"}`}>
@@ -204,15 +392,6 @@ export function StudyDrawer({ studyId, summary, onClose, onProcess, onDownload, 
                   </div>
                 )}
               </section>
-
-              {result?.is_mock && (
-                <div className="alert alert--info">
-                  <span>
-                    Результат сформирован <b>mock-процессором</b> ({result.processor_version}) — это тестовые данные,
-                    не медицинское заключение.
-                  </span>
-                </div>
-              )}
 
               {hasResult && result && (
                 <section className="panel">
@@ -224,6 +403,20 @@ export function StudyDrawer({ studyId, summary, onClose, onProcess, onDownload, 
                     </button>
                     <button className="btn btn--ghost btn--sm" onClick={() => onDownload(d.id, "xlsx")}>
                       <IconDownload size={14} /> XLSX
+                    </button>
+                    <button
+                      className="btn btn--ghost btn--sm"
+                      title="Заключение в виде DICOM Structured Report"
+                      onClick={() => void downloadFile(api.srUrl(d.id))}
+                    >
+                      <IconDownload size={14} /> DICOM SR
+                    </button>
+                    <button
+                      className="btn btn--ghost btn--sm"
+                      title="ZIP: DICOM SR, вторичная серия с разметкой и таблица"
+                      onClick={() => void downloadFile(api.packageUrl(d.id))}
+                    >
+                      <IconDownload size={14} /> Пакет
                     </button>
                   </div>
                   <div className="summary-row">
@@ -244,7 +437,18 @@ export function StudyDrawer({ studyId, summary, onClose, onProcess, onDownload, 
                   </div>
                   <div className="results">
                     {result.rows.map((r, i) => (
-                      <ResultCard key={`${r.image_id}-${i}`} row={r} preview={previews.get(r.image_id ?? "") ?? null} />
+                      <ResultCard
+                          key={`${r.image_id}-${i}`}
+                          studyId={d.id}
+                          row={r}
+                          preview={previews.get(r.image_id ?? "") ?? null}
+                          overlayUrl={
+                            r.details?.overlay
+                              ? `/api/v1/studies/${d?.id}/images/${r.image_id}/overlay`
+                              : null
+                          }
+                          onReviewed={() => void load()}
+                        />
                     ))}
                   </div>
                 </section>

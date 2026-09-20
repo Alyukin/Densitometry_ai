@@ -16,9 +16,10 @@ services:
       MAX_UPLOAD_SIZE_MB: "${MAX_UPLOAD_SIZE_MB:-1024}"
       MAX_FILES_PER_UPLOAD: "${MAX_FILES_PER_UPLOAD:-500}"
       MAX_IMAGES_PER_STUDY: "${MAX_IMAGES_PER_STUDY:-3}"
-      PROCESSOR_BACKEND: "${PROCESSOR_BACKEND:-mock}"
+      PROCESSOR_BACKEND: "${PROCESSOR_BACKEND:-rulebased}"
       WORKER_CONCURRENCY: "${WORKER_CONCURRENCY:-2}"
       PROCESSING_TIMEOUT_SEC: "${PROCESSING_TIMEOUT_SEC:-180}"
+      THRESHOLDS_PATH: "${THRESHOLDS_PATH:-}"
       MOCK_DELAY_PER_IMAGE_SEC: "${MOCK_DELAY_PER_IMAGE_SEC:-1.5}"
       MOCK_SEED: "${MOCK_SEED:-42}"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}"
@@ -47,8 +48,15 @@ services:
       context: ./frontend
     image: densitometry-frontend:0.1.0
     environment:
-      BACKEND_URL: http://backend:8000
+      # Обычно имя сервиса в сети Compose. Если в этой установке Docker имена
+      # контейнеров не резолвятся, сюда можно подставить IP backend — см. .env.example
+      BACKEND_URL: "${BACKEND_URL:-http://backend:8000}"
       CLIENT_MAX_BODY_SIZE: "${MAX_UPLOAD_SIZE_MB:-1024}m"
+      # auto — взять DNS из resolv.conf самого контейнера
+      NGINX_RESOLVER: "${NGINX_RESOLVER:-auto}"
+    extra_hosts:
+      # запасной путь до backend через хост, если DNS контейнеров не работает
+      - "host.docker.internal:host-gateway"
     ports:
       - "${FRONTEND_PORT:-8080}:80"
     depends_on:

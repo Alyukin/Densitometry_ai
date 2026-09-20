@@ -1,7 +1,10 @@
 import type {
   BatchProcessResponse,
   ExportFormat,
+  ExportSource,
   Health,
+  ReviewOut,
+  ReviewRequest,
   StudyDetail,
   StudyList,
   StudyResult,
@@ -90,7 +93,19 @@ export const api = {
   batchProcess: (body: { study_ids?: string[]; all_pending?: boolean; force?: boolean }) =>
     request<BatchProcessResponse>("/api/v1/batch/process", { method: "POST", body: JSON.stringify(body) }),
 
-  downloadUrl: (id: string, format: ExportFormat) => `${API_BASE}/api/v1/studies/${id}/download?format=${format}`,
+  downloadUrl: (id: string, format: ExportFormat, source: ExportSource = "auto") =>
+    `${API_BASE}/api/v1/studies/${id}/download?format=${format}&source=${source}`,
+
+  /** Заключение в виде DICOM SR и ZIP-пакет (SR + вторичная серия с разметкой + таблица). */
+  srUrl: (id: string) => `${API_BASE}/api/v1/studies/${id}/sr`,
+  packageUrl: (id: string) => `${API_BASE}/api/v1/studies/${id}/package`,
+
+  /** Подтверждение или исправление вердикта специалистом. */
+  review: (studyId: string, imageId: string, body: ReviewRequest) =>
+    request<ReviewOut>(`/api/v1/studies/${studyId}/images/${imageId}/review`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   batchDownloadUrl: (format: ExportFormat, ids?: string[]) => {
     const q = new URLSearchParams({ format });

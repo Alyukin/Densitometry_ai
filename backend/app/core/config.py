@@ -31,7 +31,12 @@ class Settings(BaseSettings):
     )
 
     # --- Processing ---
-    processor_backend: str = Field(default="mock", description="Имя зарегистрированного процессора: mock | ...")
+    processor_backend: str = Field(
+        default="rulebased", description="Имя зарегистрированного процессора: rulebased | mock"
+    )
+    thresholds_path: str = Field(
+        default="", description="Свой файл порогов для rulebased; пусто — пороги из состава пакета"
+    )
     worker_concurrency: int = Field(default=2, ge=1, description="Количество параллельных задач обработки")
     processing_timeout_sec: int = Field(default=180, description="Лимит времени на исследование (ТЗ: ≤ 3 мин)")
     mock_delay_per_image_sec: float = Field(default=1.5, ge=0, description="Искусственная задержка mock-обработки")

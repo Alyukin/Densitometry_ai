@@ -11,9 +11,22 @@ server {
     gzip_types text/css application/javascript application/json image/svg+xml text/csv;
     gzip_min_length 1024;
 
+    # DNS для резолва имени backend. В Docker это встроенный резолвер 127.0.0.11;
+    # для другого окружения адрес переопределяется переменной NGINX_RESOLVER.
+    resolver ${NGINX_RESOLVER} valid=10s ipv6=off;
+    resolver_timeout 5s;
+
     # API, health-check and API docs -> backend
     location ~ ^/(api/|health$|docs|redoc$|openapi\.json$) {
-        proxy_pass ${BACKEND_URL};
+        # Адрес backend кладётся в переменную намеренно. Если записать имя прямо в
+        # proxy_pass, nginx резолвит его один раз при разборе конфига, и это даёт две
+        # беды: контейнер падает с «host not found in upstream», если backend в этот
+        # момент ещё не попал в DNS, и продолжает стучаться по старому адресу, если
+        # backend перезапустился и получил новый IP. С переменной nginx стартует
+        # независимо от backend и резолвит имя заново не реже, чем раз в 10 секунд.
+        # BACKEND_URL — это схема, хост и порт, без пути и без косой черты в конце.
+        set $api_backend ${BACKEND_URL};
+        proxy_pass $api_backend$request_uri;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

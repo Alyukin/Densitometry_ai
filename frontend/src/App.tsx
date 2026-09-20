@@ -4,7 +4,6 @@ import type { ExportFormat, Health, StudySummary, UploadResponse } from "./api/t
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Header } from "./components/Header";
 import { IconInfo } from "./components/Icons";
-import { StatsBar } from "./components/StatsBar";
 import { StudiesTable, type Filter } from "./components/StudiesTable";
 import { StudyDrawer } from "./components/StudyDrawer";
 import { useToast } from "./components/Toast";
@@ -151,17 +150,13 @@ export default function App() {
       <Header health={health} healthError={healthError} />
 
       <main className="container">
-        {(health?.is_mock ?? true) && (
-          <div className="banner">
-            <IconInfo size={16} />
-            <span>
-              <b>Прототип (этап 1).</b> Обработка выполняется mock-процессором: результаты тестовые и не являются
-              медицинским заключением. AI-модель будет подключена на следующем этапе.
-            </span>
-          </div>
-        )}
-
-        <StatsBar studies={studies} />
+        <div className="banner">
+          <IconInfo size={16} />
+          <span>
+            Сервис проверяет качество укладки и разметки исследования. Это вспомогательный контроль, а не
+            медицинское заключение: решение остаётся за специалистом.
+          </span>
+        </div>
 
         <div className="layout">
           <UploadPanel onUploaded={onUploaded} />

@@ -1,5 +1,7 @@
 export type StudyStatus = "uploaded" | "queued" | "processing" | "completed" | "failed";
 export type ExportFormat = "csv" | "xlsx";
+/** Что попадает в колонки ТЗ: вердикт сервиса или решение специалиста. */
+export type ExportSource = "auto" | "reviewed";
 
 export interface QualitySummary {
   total: number;
@@ -85,13 +87,27 @@ export interface StudyStatusOut {
 }
 
 export interface CheckDetail {
-  code: string;
-  title: string;
-  passed: boolean;
+  // поля mock-процессора
+  code?: string;
+  passed?: boolean;
   value?: unknown;
   unit?: string;
   threshold?: unknown;
+  title: string;
+  // поля процессора rulebased: измеренная величина, критерий и его источник
+  rule_id?: string;
+  violation?: string;
+  fired?: boolean;
+  measured?: string;
+  criterion?: string;
+  source?: "ТЗ" | "разметка" | string;
+  score?: number;
+  decides?: boolean; // false — проверка справочная, в вердикт не входит
+  tz_threshold?: number | null; // порог, прямо записанный в ТЗ
+  tz_fired?: boolean | null; // вердикт по букве ТЗ
 }
+
+export type ReviewStatus = "" | "confirmed" | "corrected";
 
 export interface ResultRow {
   path_to_study: string;
@@ -107,6 +123,27 @@ export interface ResultRow {
   confidence: number | null;
   error_message: string | null;
   details: { checks?: CheckDetail[]; note?: string; mock?: boolean; [k: string]: unknown };
+  // проверка специалистом: автоматический вердикт выше при этом не меняется
+  review_status: ReviewStatus;
+  reviewed_quality_class: string | null;
+  reviewed_violation_type: string | null;
+  reviewed_by: string | null;
+  review_comment: string | null;
+  reviewed_at: string | null;
+}
+
+export interface ReviewRequest {
+  action: "confirm" | "correct" | "reset";
+  violation_type?: string[];
+  reviewed_by?: string | null;
+  comment?: string | null;
+}
+
+export interface ReviewOut {
+  study_id: string;
+  row: ResultRow;
+  allowed_violations: string[];
+  agreement: Record<string, number | null>;
 }
 
 export interface StudyResult {

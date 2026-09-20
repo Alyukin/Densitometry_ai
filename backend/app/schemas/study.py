@@ -149,6 +149,49 @@ class ResultRow(ORMModel):
     confidence: float | None
     error_message: str | None
     details: dict[str, Any]
+    # проверка специалистом: автоматический вердикт выше остаётся нетронутым
+    review_status: str = ""
+    reviewed_quality_class: str | None = None
+    reviewed_violation_type: str | None = None
+    reviewed_by: str | None = None
+    review_comment: str | None = None
+    reviewed_at: UtcDatetime | None = None
+
+
+# --- Проверка специалистом ---
+class ReviewRequest(BaseModel):
+    """Подтверждение или исправление вердикта (ТЗ: коррекция с подтверждением специалиста)."""
+
+    action: Literal["confirm", "correct", "reset"] = Field(
+        description="confirm — согласиться с сервисом, correct — заменить вердикт, reset — снять проверку"
+    )
+    violation_type: list[str] = Field(
+        default_factory=list,
+        description="Только для correct: нарушения из закрытого списка своей области. Пустой список — «годно».",
+    )
+    reviewed_by: str | None = Field(default=None, max_length=128, description="Кто проверил")
+    comment: str | None = Field(default=None, max_length=2000, description="Комментарий специалиста")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"action": "confirm", "reviewed_by": "Иванов И.И."},
+                {
+                    "action": "correct",
+                    "violation_type": ["Не выравнена ось позвоночника"],
+                    "reviewed_by": "Иванов И.И.",
+                    "comment": "сколиоз, ось не выровнена",
+                },
+            ]
+        }
+    )
+
+
+class ReviewOut(BaseModel):
+    study_id: str
+    row: ResultRow
+    allowed_violations: list[str] = Field(description="Закрытый список нарушений для области этого изображения")
+    agreement: dict[str, Any] = Field(description="Насколько сервис сходится с врачом по этому исследованию")
 
 
 class StudyResultOut(BaseModel):

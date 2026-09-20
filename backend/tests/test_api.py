@@ -82,8 +82,8 @@ def test_upload_zip(client: TestClient, samples: Path) -> None:
     r = upload(client, (samples / "demo_studies.zip", "demo_studies.zip"))
     assert r.status_code == 201, r.text
     studies = r.json()["studies"]
-    assert len(studies) == 4
-    assert sum(s["image_count"] for s in studies) == 7
+    assert len(studies) == 7
+    assert sum(s["image_count"] for s in studies) == 10
 
 
 def test_upload_rejects_non_dicom(client: TestClient, samples: Path) -> None:
@@ -139,7 +139,7 @@ def test_full_processing_flow(client: TestClient, samples: Path) -> None:
     assert "attachment" in csv_resp.headers["content-disposition"]
     rows = list(csv.reader(io.StringIO(csv_resp.text)))
     assert rows[0] == EXPORT_COLUMNS
-    assert len(rows) == 4
+    assert len(rows) == 4  # шапка + 3 снимка исследования
 
     xlsx_resp = client.get(f"/api/v1/studies/{sid}/download?format=xlsx")
     assert xlsx_resp.status_code == 200
@@ -196,13 +196,13 @@ def test_batch_process_and_download(client: TestClient, samples: Path) -> None:
 
     r = client.get("/api/v1/batch/download", params={"format": "csv"})
     assert r.status_code == 200
-    assert len(r.text.strip().splitlines()) == 1 + 7
+    assert len(r.text.strip().splitlines()) == 1 + 10
 
     r = client.get("/api/v1/batch/download", params={"format": "xlsx", "study_ids": ids[:1]})
     assert r.status_code == 200
 
     listing = client.get("/api/v1/studies", params={"status": "completed"}).json()
-    assert listing["total"] == 4
+    assert listing["total"] == 7
     assert listing["items"][0]["summary"]["total"] >= 1
 
 

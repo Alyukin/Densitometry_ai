@@ -1,0 +1,5 @@
+-r requirements.txt
+# Обучение. Версии CUDA-сборки подобрать под драйвер H200 (cu124/cu126):
+#   pip install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu126
+torch==2.9.1
+torchvision==0.24.1

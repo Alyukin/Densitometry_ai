@@ -18,8 +18,15 @@ RUN npm run build && chmod -R a+rX,go-w dist
 # ---------- Serve with nginx ----------
 FROM ${NGINX_IMAGE}
 ENV BACKEND_URL=http://backend:8000 \
-    CLIENT_MAX_BODY_SIZE=1024m
-# nginx image renders /etc/nginx/templates/*.template with envsubst on start
+    CLIENT_MAX_BODY_SIZE=1024m \
+    NGINX_RESOLVER=auto
+# nginx image renders /etc/nginx/templates/*.template with envsubst on start;
+# 16-resolver.envsh подбирает DNS до рендеринга шаблона (имя должно сортироваться
+# между 15-local-resolvers.envsh и 20-envsubst-on-templates.sh).
+# chmod обязателен: entrypoint образа молча пропускает файлы без бита исполнения,
+# и тогда в конфиг попало бы NGINX_RESOLVER=auto, с которым nginx не стартует.
+COPY docker-entrypoint.d/16-resolver.envsh /docker-entrypoint.d/16-resolver.envsh
+RUN chmod +x /docker-entrypoint.d/16-resolver.envsh
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80

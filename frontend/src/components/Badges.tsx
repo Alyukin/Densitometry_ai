@@ -1,5 +1,5 @@
 import type { StudyStatus } from "../api/types";
-import { QUALITY_LABELS, STATUS_LABELS, label } from "../utils/format";
+import { QUALITY_LABELS, STATUS_LABELS, isBadQuality, label } from "../utils/format";
 
 export function StatusBadge({ status, progress }: { status: StudyStatus; progress?: number }) {
   return (
@@ -13,7 +13,7 @@ export function StatusBadge({ status, progress }: { status: StudyStatus; progres
 
 export function QualityBadge({ quality }: { quality: string | null | undefined }) {
   if (!quality) return <span className="muted">—</span>;
-  const tone = quality === "acceptable" ? "ok" : quality === "unacceptable" ? "bad" : "neutral";
+  const tone = isBadQuality(quality) ? "bad" : "ok";
   return <span className={`badge badge--q-${tone}`}>{label(QUALITY_LABELS, quality)}</span>;
 }
 
@@ -28,13 +28,5 @@ export function ProgressBar({ value, status }: { value: number; status: StudySta
     >
       <div className="progress__fill" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
     </div>
-  );
-}
-
-export function MockBadge() {
-  return (
-    <span className="badge badge--mock" title="Результат сформирован mock-процессором">
-      MOCK
-    </span>
   );
 }

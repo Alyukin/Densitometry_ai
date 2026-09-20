@@ -28,6 +28,13 @@ class StudyStatus(enum.StrEnum):
 
 ACTIVE_STATUSES = (StudyStatus.queued, StudyStatus.processing)
 
+# Состояния проверки специалистом (ТЗ: «автоматическая коррекция разметки с
+# подтверждением специалиста»).
+REVIEW_NONE = ""  # врач ещё не смотрел
+REVIEW_CONFIRMED = "confirmed"  # врач согласен с автоматическим вердиктом
+REVIEW_CORRECTED = "corrected"  # врач исправил вердикт
+REVIEW_STATUSES = (REVIEW_NONE, REVIEW_CONFIRMED, REVIEW_CORRECTED)
+
 
 class Study(Base):
     __tablename__ = "studies"
@@ -112,4 +119,28 @@ class ImageResult(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    # --- проверка специалистом --------------------------------------------
+    # Автоматический вердикт выше НИКОГДА не переписывается: врач заполняет
+    # отдельные поля. Так в любой момент видно, что предложил сервис и что решил
+    # человек, и по этим же полям считается, как часто сервис ошибается.
+    review_status: Mapped[str] = mapped_column(String(16), default=REVIEW_NONE)
+    reviewed_quality_class: Mapped[str | None] = mapped_column(String(8))
+    reviewed_violation_type: Mapped[str | None] = mapped_column(String(512))
+    reviewed_by: Mapped[str | None] = mapped_column(String(128))
+    review_comment: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     study: Mapped[Study] = relationship(back_populates="results")
+
+    @property
+    def final_quality_class(self) -> str | None:
+        """Что считать итогом: решение врача, если он его вынес, иначе автоматическое."""
+        if self.review_status == REVIEW_CORRECTED:
+            return self.reviewed_quality_class
+        return self.quality_class
+
+    @property
+    def final_violation_type(self) -> str | None:
+        if self.review_status == REVIEW_CORRECTED:
+            return self.reviewed_violation_type or ""
+        return self.violation_type
