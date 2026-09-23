@@ -15,6 +15,20 @@ from dxa.labels import REGION_FEMUR
 from train.tasks import targets_for
 
 
+def to_tensor(a: np.ndarray, norm: str = "imagenet") -> torch.Tensor:
+    """Кадр со значениями [0, 1] (H×W) -> вход сети в той нормировке, в которой учился бэкбон.
+
+    Одна функция и для обучения, и для инференса (`train.predict`): если нормировка
+    разойдётся, модель будет получать в бою не то, на чём училась, и ошибка будет тихой.
+    """
+    x = torch.from_numpy(np.ascontiguousarray(a, dtype=np.float32))[None]
+    if norm == "xrv":
+        return (2.0 * x - 1.0) * 1024.0  # как xrv.utils.normalize: [-1024, 1024], один канал
+    if norm == "imagenet":
+        return ((x - 0.449) / 0.226).repeat(3, 1, 1)  # ImageNet-бэкбон ждёт 3 канала
+    raise ValueError(f"неизвестная нормировка: {norm}")
+
+
 @dataclass
 class Sample:
     image_id: str
@@ -73,8 +87,10 @@ class DxaDataset(Dataset):
         max_scale: float = 0.08,
         femur_max_rot_deg: float = 3.0,
         brightness: float = 0.15,
+        norm: str = "imagenet",
     ) -> None:
         self.samples = samples
+        self.norm = norm
         self.size = size
         self.train = train
         self.hflip_femur = hflip_femur
@@ -120,8 +136,6 @@ class DxaDataset(Dataset):
 
     def __getitem__(self, i: int):  # noqa: ANN204
         s = self.samples[i]
-        a = self._load(s)
-        x = torch.from_numpy(a)[None].repeat(3, 1, 1)  # ImageNet-бэкбон ждёт 3 канала
-        x = (x - 0.449) / 0.226
+        x = to_tensor(self._load(s), self.norm)
         t, m = targets_for(s.region, s.quality_class, s.violations, s.violations_known)
         return x, torch.tensor(t), torch.tensor(m), i

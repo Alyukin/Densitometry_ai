@@ -291,3 +291,48 @@ def test_sr_records_the_specialist_decision(rb_client: TestClient, processed) ->
     texts = _texts(ds)
     assert texts["Проверка специалистом"] == "подтверждено специалистом"
     assert texts["Проверил"] == "Иванов"
+
+
+def test_verified_sr_names_the_verifier(rb_client: TestClient, processed) -> None:
+    """VERIFIED без VerifyingObserverSequence — нарушение стандарта (атрибут 1C)."""
+    sid, rows = processed
+    rb_client.post(
+        f"/api/v1/studies/{sid}/images/{rows[0]['image_id']}/review",
+        json={"action": "confirm", "reviewed_by": "Иванов"},
+    )
+    ds = pydicom.dcmread(io.BytesIO(rb_client.get(f"/api/v1/studies/{sid}/sr").content))
+    assert ds.VerificationFlag == "VERIFIED"
+    assert [str(o.VerifyingObserverName) for o in ds.VerifyingObserverSequence] == ["Иванов"]
+    assert len(ds.VerifyingObserverSequence[0].VerificationDateTime) == 14
+
+
+def test_review_without_a_name_does_not_verify_sr(rb_client: TestClient, processed) -> None:
+    """Исправление без имени проверившего — не заверенный документ."""
+    sid, rows = processed
+    rb_client.post(
+        f"/api/v1/studies/{sid}/images/{rows[0]['image_id']}/review",
+        json={"action": "correct", "violation_type": []},
+    )
+    ds = pydicom.dcmread(io.BytesIO(rb_client.get(f"/api/v1/studies/{sid}/sr").content))
+    assert ds.VerificationFlag == "UNVERIFIED"
+    assert "VerifyingObserverSequence" not in ds
+    assert _texts(ds)["Проверка специалистом"]  # само решение в отчёте есть
+
+
+def test_sr_has_all_type2_attributes(rb_client: TestClient, processed) -> None:
+    """Атрибуты типа 2 обязаны присутствовать, хотя бы пустыми (так проверяет dsrdump)."""
+    sid, _ = processed
+    ds = pydicom.dcmread(io.BytesIO(rb_client.get(f"/api/v1/studies/{sid}/sr").content))
+    for tag in (
+        "PatientName",
+        "PatientID",
+        "PatientBirthDate",
+        "PatientSex",
+        "StudyDate",
+        "StudyTime",
+        "ReferringPhysicianName",
+        "AccessionNumber",
+        "ReferencedPerformedProcedureStepSequence",
+        "PerformedProcedureCodeSequence",
+    ):
+        assert tag in ds, tag

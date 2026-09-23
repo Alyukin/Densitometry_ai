@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 backend/data/
 backend/app/static/docs/
 
@@ -15,6 +16,9 @@ frontend/*.tsbuildinfo
 # Runtime data / secrets
 data/
 .env
+
+# Копии файлов, выданных в чате; рабочие версии — в ml/ и ml/baseline/
+outputs/
 
 # OS / IDE
 .DS_Store

@@ -46,6 +46,13 @@ LT_MAX_PLAUSIBLE_MM = 25.0  # больший «выступ» означает, 
 TROCH_SEARCH_MM = 70.0
 NECK_SEARCH_MM = 55.0
 
+# Кость в кадре есть, но бедро не разбирается на диафиз, вертелы и шейку. Это не
+# технический сбой, а вывод о снимке: структуры, которые по ТЗ должны быть видны, не
+# найдены (см. rules.structures_not_found).
+REASON_NO_TRACK = "не удалось проследить бедренную кость"
+REASON_NO_LANDMARKS = "не удалось разобрать бедро на диафиз и вертелы"
+STRUCTURE_REASONS = (REASON_NO_TRACK, REASON_NO_LANDMARKS)
+
 
 @dataclass
 class FemurMeasurements:
@@ -316,13 +323,13 @@ def measure_femur(arr: np.ndarray, spacing: Spacing | None = None, side: str = "
 
     track = track_femur(bone)
     if track is None:
-        m.reason = "не удалось проследить бедренную кость"
+        m.reason = REASON_NO_TRACK
         return m
     ys, left, right = track
     width = right - left + 1
     lm = _landmarks(ys, width, sp)
     if lm is None:
-        m.reason = "не удалось разобрать бедро на диафиз и вертелы"
+        m.reason = REASON_NO_LANDMARKS
         return m
 
     sl_sh = slice(lm.i_shaft_top, len(ys))

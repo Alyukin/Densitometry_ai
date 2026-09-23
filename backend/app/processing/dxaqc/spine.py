@@ -43,6 +43,11 @@ from .image import (
     to_float,
 )
 
+# Кадр не пустой, но позвоночный столб не выделяется: структуры, которые по ТЗ должны
+# быть в кадре, не найдены (см. rules.structures_not_found).
+REASON_NO_COLUMN = "не удалось выделить позвоночный столб"
+STRUCTURE_REASONS = (REASON_NO_COLUMN,)
+
 
 @dataclass
 class SpineMeasurements:
@@ -274,7 +279,7 @@ def measure_spine(arr: np.ndarray, spacing: Spacing | None = None) -> SpineMeasu
     bone = bone_mask(a, body)
     runs = _column_runs(bone, body)
     if runs is None:
-        m.reason = "не удалось выделить позвоночный столб"
+        m.reason = REASON_NO_COLUMN
         stats, _ = _foreign(a, body, bone)
         for key, val in stats.items():
             setattr(m, key, val)

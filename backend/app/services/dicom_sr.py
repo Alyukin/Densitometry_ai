@@ -234,9 +234,44 @@ def _passthrough(sr: Dataset, source: Dataset | None) -> None:
         value = source.get(tag) if source is not None else None
         if value not in (None, ""):
             setattr(sr, tag, value)
-    for tag, default in (("PatientName", ""), ("PatientID", ""), ("StudyID", "1"), ("AccessionNumber", "")):
+    # Атрибуты типа 2 обязаны присутствовать, хотя бы пустыми: без них строгий PACS
+    # отклоняет объект (так их отмечает dsrdump из dcmtk).
+    for tag, default in (
+        ("PatientName", ""),
+        ("PatientID", ""),
+        ("PatientBirthDate", ""),
+        ("PatientSex", ""),
+        ("StudyDate", ""),
+        ("StudyTime", ""),
+        ("StudyID", "1"),
+        ("AccessionNumber", ""),
+        ("ReferringPhysicianName", ""),
+    ):
         if not hasattr(sr, tag):
             setattr(sr, tag, default)
+
+
+def _verifying_observers(results: list[ImageResult]) -> Sequence:
+    """Кто подтвердил заключение — обязателен, если отчёт помечен VERIFIED.
+
+    VERIFIED ставится только тогда, когда проверивший назвал себя: без имени это
+    не заверенный документ, а просто исправленные данные, и отчёт остаётся UNVERIFIED.
+    """
+    items: list[Dataset] = []
+    seen: set[str] = set()
+    for r in results:
+        name = (r.reviewed_by or "").strip()
+        if r.review_status not in (REVIEW_CONFIRMED, REVIEW_CORRECTED) or not name or name in seen:
+            continue
+        seen.add(name)
+        obs = Dataset()
+        obs.VerifyingObserverName = name
+        when = r.reviewed_at or datetime.now(UTC)
+        obs.VerificationDateTime = when.strftime("%Y%m%d%H%M%S")
+        obs.VerifyingOrganization = ""
+        obs.VerifyingObserverIdentificationCodeSequence = Sequence()
+        items.append(obs)
+    return Sequence(items)
 
 
 def build_sr(study: Study, results: list[ImageResult], data_dir: Path) -> FileDataset:
@@ -277,9 +312,12 @@ def build_sr(study: Study, results: list[ImageResult], data_dir: Path) -> FileDa
     sr.ContentTime = now.strftime("%H%M%S")
     sr.SpecificCharacterSet = "ISO_IR 192"  # UTF-8: заключение на русском
     sr.CompletionFlag = "COMPLETE"
-    sr.VerificationFlag = (
-        "VERIFIED" if any(r.review_status in (REVIEW_CONFIRMED, REVIEW_CORRECTED) for r in results) else "UNVERIFIED"
-    )
+    observers = _verifying_observers(results)
+    sr.VerificationFlag = "VERIFIED" if len(observers) else "UNVERIFIED"
+    if len(observers):
+        sr.VerifyingObserverSequence = observers
+    sr.ReferencedPerformedProcedureStepSequence = Sequence()  # тип 2
+    sr.PerformedProcedureCodeSequence = Sequence()  # тип 2
 
     sr.ValueType = "CONTAINER"
     sr.ConceptNameCodeSequence = Sequence([_code("126000", "Отчёт по измерениям изображения", scheme="DCM")])

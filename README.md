@@ -68,8 +68,8 @@ curl -o result.xlsx "http://localhost:8080/api/v1/batch/download?format=xlsx"
 path_to_study,study_uid,image_uid,anatomical_region,quality_class,violation_type,processing_status,time_of_processing,quality_prob
 ```
 
-`quality_class` — целое 0 или 1, `processing_status` — `Success` или `Failure`, время в
-секундах, `anatomical_region` и `violation_type` — из закрытых списков заказчика (несколько
+`quality_class` — целое 0 или 1, `processing_status` — `Success` или `Failure` (только
+когда оценивать нечего: не DICOM, нет пикселей, пустой кадр), время в секундах, `anatomical_region` и `violation_type` — из закрытых списков заказчика (несколько
 нарушений через `;`). В XLSX есть листы `checks` (проверки с порогами) и `review`.
 
 ## Как устроено
@@ -110,5 +110,6 @@ make localization   # метрики локализации по ТЗ
 - Входа по паролю нет — сервис рассчитан на закрытый контур; SQLite и очередь внутри
   процесса рассчитаны на один экземпляр backend.
 
-Что проверяется, как решается и что делать при сбоях — [status.md](status.md); качество на
-отложенных данных и метрики — [ml/baseline/REPORT.md](ml/baseline/REPORT.md).
+Что проверяется и что делать при сбоях — [status.md](status.md); качество и метрики —
+[ml/baseline/REPORT.md](ml/baseline/REPORT.md); принятые решения — [questions.md](questions.md);
+дальнейшие этапы — [roadmap.md](roadmap.md).

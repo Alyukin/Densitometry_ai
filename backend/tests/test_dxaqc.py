@@ -10,10 +10,20 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from app.processing.dxaqc import analyze as analyze_mod
 from app.processing.dxaqc.analyze import Analyzer
+from app.processing.dxaqc.femur import REASON_NO_LANDMARKS, FemurMeasurements
 from app.processing.dxaqc.image import Spacing, body_mask, otsu_threshold, theil_sen_slope, to_float
 from app.processing.dxaqc.region import REGION_FEMUR, REGION_SPINE, detect, is_dxa_like
-from app.processing.dxaqc.rules import RULES, evaluate
+from app.processing.dxaqc.rules import (
+    QUALITY_SCORE,
+    RULES,
+    STRUCTURES_PROB,
+    VIOL_POSITION,
+    evaluate,
+    load_thresholds,
+    structures_not_found,
+)
 from app.processing.dxaqc.spine import measure_spine
 from app.scripts.generate_samples import _hip_image, _spine_image
 
@@ -254,3 +264,61 @@ def test_roi_violation_on_cropped_field() -> None:
     cropped = a.analyze(_hip_image(np.random.default_rng(8), crop_top=70))
     assert cropped.measurements["field_h_cm"] < full.measurements["field_h_cm"]
     assert "Некорректная область интереса" in cropped.violations
+
+
+# --- quality_prob и ненайденные структуры -------------------------------------
+
+
+@pytest.mark.parametrize("region", [REGION_SPINE, REGION_FEMUR])
+def test_quality_prob_agrees_with_class(region: str) -> None:
+    """Каким бы ни был способ сложения, quality_prob > 0.5 тогда и только тогда, когда класс 1."""
+    th = load_thresholds()
+    rng = np.random.default_rng(0)
+    features = {spec["feature"] for spec in RULES.values() if spec["region"] == region}
+    for _ in range(200):
+        meas = {f: float(rng.uniform(0, 60)) for f in features}
+        meas["lt_measured"] = 1.0
+        v = evaluate(region, meas, th)
+        assert 0.0 <= v.quality_prob <= 1.0
+        assert (v.quality_prob > 0.5) == (v.quality_class == 1) == bool(v.violations)
+
+
+def test_spine_score_uses_reference_checks_too() -> None:
+    """Для позвоночника справочные проверки двигают quality_prob, но не класс."""
+    assert QUALITY_SCORE[REGION_SPINE] == "mean_all"
+    th = load_thresholds()
+    base = {spec["feature"]: 0.0 for spec in RULES.values() if spec["region"] == REGION_SPINE}
+    base["iliac_score"] = 10.0  # подвздошные кости в кадре
+    calm = evaluate(REGION_SPINE, base, th)
+    tilted = evaluate(REGION_SPINE, {**base, "axis_tz_deg": 30.0, "axis_segment_deg": 30.0}, th)
+    assert calm.quality_class == tilted.quality_class == 0
+    assert tilted.quality_prob > calm.quality_prob
+
+
+def test_structures_not_found_is_a_verdict_from_closed_list() -> None:
+    v = structures_not_found(REGION_FEMUR, REASON_NO_LANDMARKS)
+    assert v.quality_class == 1
+    assert v.violations == [VIOL_POSITION]
+    assert v.quality_prob == STRUCTURES_PROB
+    assert REASON_NO_LANDMARKS in v.explanation
+    assert v.checks[0].source == "ТЗ"
+
+
+def test_analyzer_gives_verdict_when_femur_structures_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Кость есть, но бедро не разбирается на диафиз и вертелы — это вердикт, а не отказ."""
+    monkeypatch.setattr(
+        analyze_mod, "measure_femur", lambda *a, **k: FemurMeasurements(ok=False, reason=REASON_NO_LANDMARKS)
+    )
+    res = Analyzer().analyze(_hip_image(np.random.default_rng(0)), region=REGION_FEMUR)
+    assert res.ok
+    assert res.quality_class == 1
+    assert res.violations == [VIOL_POSITION]
+
+
+def test_empty_frame_is_still_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Технические отказы остаются отказами: там оценивать нечего."""
+    monkeypatch.setattr(
+        analyze_mod, "measure_femur", lambda *a, **k: FemurMeasurements(ok=False, reason="кость не найдена")
+    )
+    res = Analyzer().analyze(_hip_image(np.random.default_rng(0)), region=REGION_FEMUR)
+    assert not res.ok

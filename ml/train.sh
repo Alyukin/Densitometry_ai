@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Baseline целиком: зависимости -> проверка разметки -> датасет -> обучение 5 фолдов -> метрики.
+# Обучение нейросети целиком: зависимости -> проверка разметки -> датасет -> 5 фолдов -> метрики.
+# (Baseline в проекте — это правила ТЗ в backend/app/processing/dxaqc, этот скрипт не про них.)
 #
-#   bash ml/run_baseline.sh
+#   bash ml/train.sh
 #
 # Первый аргумент (или переменная DATA_ROOT) — папка Densitometry_data.
 # Скрипт ничего не пишет в исходные данные, всё складывает в ml/data и ml/runs.
@@ -11,14 +12,14 @@ cd "$(dirname "$0")"
 
 DATA_ROOT="${1:-${DATA_ROOT:-../../Densitometry_data}}"
 OUT_DATA="${OUT_DATA:-data/processed}"
-OUT_RUN="${OUT_RUN:-runs/baseline}"
+OUT_RUN="${OUT_RUN:-runs/cnn}"
 EPOCHS="${EPOCHS:-40}"
 BACKBONE="${BACKBONE:-resnet18}"
 BATCH="${BATCH:-16}"
 
 if [ ! -d "$DATA_ROOT/НД_для_обучения/Исследования" ]; then
   echo "Не нашёл выгрузку в: $DATA_ROOT" >&2
-  echo "Запустите так:  bash ml/run_baseline.sh /путь/к/Densitometry_data" >&2
+  echo "Запустите так:  bash ml/train.sh /путь/к/Densitometry_data" >&2
   exit 1
 fi
 

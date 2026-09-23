@@ -30,6 +30,14 @@ VIOL_SPINE_AXIS = "Не выравнена ось позвоночника"
 VIOL_FOREIGN = "Присутствуют посторонние предметы"
 VIOL_FEMUR_ROI = "Некорректная область интереса"
 
+# Закрытые списки заказчика (ответ на вопрос 6) — единственный источник в сервисе.
+# Копии, которые не могут импортировать этот модуль (ml/dxa/labels.py и интерфейс),
+# сверяет тест ml/tests/test_closed_lists.py.
+CLOSED_VIOLATIONS: dict[str, tuple[str, ...]] = {
+    REGION_SPINE: (VIOL_POSITION, VIOL_SPINE_AXIS, VIOL_FOREIGN),
+    REGION_FEMUR: (VIOL_POSITION, VIOL_FEMUR_ROI),
+}
+
 THRESHOLDS_PATH = Path(__file__).with_name("thresholds.json")
 
 
@@ -272,6 +280,74 @@ RULES: dict[str, dict] = {
 }
 
 
+# Как оценки проверок складываются в quality_prob. Меняется только порядок снимков
+# (ROC и PR AUC), класс и нарушения задают сработавшие решающие проверки.
+#
+#   max      — максимум по решающим проверкам;
+#   mean_all — среднее по всем проверкам, включая справочные.
+#
+# Выбрано вложенной кросс-валидацией из четырёх заранее объявленных вариантов
+# (ml/baseline/combine_check.py). Позвоночник: mean_all выбран на всех пяти фолдах,
+# AUC 0.69 против 0.62 у максимума, разница +0.07 [+0.01; +0.14]. Бедро: выигрыша
+# нет, остаётся максимум.
+QUALITY_SCORE = {REGION_SPINE: "mean_all", REGION_FEMUR: "max"}
+
+
+def quality_score(region: str, checks: list[Check]) -> float:
+    if QUALITY_SCORE.get(region) == "mean_all":
+        scores = [c.score for c in checks]
+        return sum(scores) / len(scores) if scores else 0.0
+    return max((c.score for c in checks if c.decides), default=0.0)
+
+
+# Когда снимок прочитан и область определена, но структуры, которые по ТЗ должны быть
+# видны, найти не удалось. Вердикт — нарушение укладки с минимальной уверенностью.
+STRUCTURES = {
+    REGION_FEMUR: (
+        "Большой вертел, шейка и диафиз бедра",
+        "по ТЗ (рис. 4) на изображении должны визуализироваться большой вертел, шейка бедра и седалищная кость",
+    ),
+    REGION_SPINE: (
+        "Позвоночный столб",
+        "по ТЗ (рис. 1) в кадре должен быть поясничный отдел от половины тела Th12 до верхних краёв подвздошных костей",
+    ),
+}
+STRUCTURES_PROB = 0.51
+
+
+def structures_not_found(region: str, reason: str) -> Verdict:
+    """Вердикт для снимка, на котором не нашлись обязательные по ТЗ структуры.
+
+    Отказ (`Failure`) здесь был бы неверным ответом: файл прочитан, область
+    определена, и сам факт, что бедро не разбирается на диафиз и вертелы, говорит о
+    снимке, а не о сбое. На размеченной выгрузке такой снимок один, и эксперт отметил
+    на нём «Некорректная укладка». Уверенность минимальная — чтобы специалист
+    посмотрел его первым.
+    """
+    title, criterion = STRUCTURES[region]
+    check = Check(
+        rule_id="structures_found",
+        violation=VIOL_POSITION,
+        fired=True,
+        value=0.0,
+        threshold=1.0,
+        op="<",
+        score=STRUCTURES_PROB,
+        title=title,
+        measured=f"{title}: не найдены ({reason})",
+        criterion=f"{criterion}; видимость не подтверждена",
+        source="ТЗ",
+    )
+    return Verdict(
+        region=region,
+        quality_class=1,
+        quality_prob=STRUCTURES_PROB,
+        violations=[VIOL_POSITION],
+        checks=[check],
+        explanation=f"НАРУШЕНИЕ: {check.measured} — {check.criterion}",
+    )
+
+
 def load_thresholds(path: str | Path | None = None) -> dict:
     p = Path(path) if path else THRESHOLDS_PATH
     if not p.exists():
@@ -332,7 +408,11 @@ def evaluate(region: str, measurements: dict, thresholds: dict | None = None) ->
         )
 
     violations = sorted({c.violation for c in checks if c.fired and c.decides})
-    prob = max((c.score for c in checks if c.decides), default=0.0)
+    prob = quality_score(region, checks)
+    if QUALITY_SCORE.get(region) == "mean_all":
+        # среднее не знает, какие проверки сработали, поэтому класс задаёт половину
+        # шкалы, а среднее — порядок внутри неё
+        prob = 0.5 + 0.5 * prob if violations else 0.5 * prob
     if violations:
         prob = max(prob, 0.5 + 1e-6)
     else:

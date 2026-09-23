@@ -14,12 +14,55 @@ BACKBONES = {
     "efficientnet_b0": ("efficientnet_b0", "EfficientNet_B0_Weights"),
 }
 
+# Бэкбоны, предобученные на рентгенограммах (TorchXRayVision, Apache-2.0): имя -> веса
+# библиотеки. «all» — общая модель, обученная сразу на семи наборах снимков грудной
+# клетки; к DXA она ближе, чем ImageNet с его фотографиями.
+XRV_BACKBONES = {
+    "xrv-densenet121": "densenet121-res224-all",
+}
+
+
+def input_spec(backbone: str) -> str:
+    """Нормировка входа, в которой учился бэкбон.
+
+    `imagenet` — три одинаковых канала, среднее и разброс ImageNet;
+    `xrv` — один канал в диапазоне [-1024, 1024], как у TorchXRayVision.
+    """
+    return "xrv" if backbone in XRV_BACKBONES else "imagenet"
+
+
+class XrvDenseNetFeatures(nn.Module):
+    """Свёрточная часть DenseNet из TorchXRayVision без встроенного ресайза.
+
+    Штатный `features2` библиотеки сам сжимает вход до 224×224. Для DXA это вредно:
+    малый вертел занимает несколько пикселей, поэтому разрешение задаётся параметрами
+    обучения, а не бэкбоном. Свёртки DenseNet с этим справляются — на выходе глобальное
+    усреднение.
+    """
+
+    def __init__(self, features: nn.Module) -> None:
+        super().__init__()
+        self.features = features
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        f = nn.functional.relu(self.features(x))
+        return nn.functional.adaptive_avg_pool2d(f, 1).flatten(1)
+
+
+def _build_xrv(name: str, pretrained: bool) -> tuple[nn.Module, int]:
+    import torchxrayvision as xrv
+
+    net = xrv.models.DenseNet(weights=XRV_BACKBONES[name] if pretrained else None)
+    return XrvDenseNetFeatures(net.features), net.classifier.in_features
+
 
 def build_backbone(name: str, pretrained: bool = True) -> tuple[nn.Module, int]:
     import torchvision.models as tvm
 
+    if name in XRV_BACKBONES:
+        return _build_xrv(name, pretrained)
     if name not in BACKBONES:
-        raise ValueError(f"неизвестный бэкбон {name}, доступны: {list(BACKBONES)}")
+        raise ValueError(f"неизвестный бэкбон {name}, доступны: {[*BACKBONES, *XRV_BACKBONES]}")
     fn_name, weights_enum = BACKBONES[name]
     weights = getattr(tvm, weights_enum).DEFAULT if pretrained else None
     net = getattr(tvm, fn_name)(weights=weights)

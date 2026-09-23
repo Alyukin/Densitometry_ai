@@ -29,17 +29,19 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend" / "app" / "processing"))
 sys.path.insert(0, str(ROOT / "ml"))
 
-from dxaqc.rules import RULES, TZ_THRESHOLDS, Verdict, evaluate  # noqa: E402
+from dxaqc.analyze import STRUCTURE_REASONS  # noqa: E402
+from dxaqc.rules import (  # noqa: E402
+    CLOSED_VIOLATIONS,
+    RULES,
+    TZ_THRESHOLDS,
+    Verdict,
+    evaluate,
+    structures_not_found,
+)
 
 from train.metrics import summarize, throughput  # noqa: E402
 
-REGION_SPINE = "Поясничный отдел позвоночника"
-REGION_FEMUR = "Проксимальный отдел бедра"
-
-VIOLATIONS = {
-    REGION_SPINE: ["Некорректная укладка", "Не выравнена ось позвоночника", "Присутствуют посторонние предметы"],
-    REGION_FEMUR: ["Некорректная укладка", "Некорректная область интереса"],
-}
+VIOLATIONS = {region: list(viols) for region, viols in CLOSED_VIOLATIONS.items()}
 
 
 def load_features(path: Path) -> list[dict]:
@@ -190,6 +192,10 @@ def fit_rules(rows: list[dict], min_specificity: float, min_gain: float = 0.02, 
 def predict_rows(rows: list[dict], cfg: dict) -> list[Verdict]:
     out = []
     for r in rows:
+        if r.get("ok") != "True" and r.get("reason") in STRUCTURE_REASONS:
+            # как в сервисе: структуры не найдены — это вердикт, а не отказ
+            out.append(structures_not_found(r["region"], r["reason"]))
+            continue
         meas = {}
         for k, v in r.items():
             if k.startswith("_") or k in ("image_id", "study_dir", "region", "side", "violation_type", "reason", "ok"):
@@ -249,14 +255,18 @@ def _throughput_block(rows: list[dict]) -> dict:
     """Две метрики ТЗ, которые считаются не по классам, а по всей выгрузке:
     доля успешно обработанных файлов и время обработки."""
     times = []
+    n_structures = 0
     for r in rows:
         if r.get("ok") != "True":
-            continue
+            if r.get("reason") not in STRUCTURE_REASONS:
+                continue  # отказ: вердикта нет
+            n_structures += 1
         try:
             times.append(float(r.get("measure_sec", "") or "nan"))
         except ValueError:
             continue
     block = throughput(times, n_total=len(rows))
+    block["из_них_структуры_не_найдены"] = n_structures
     block["что_измерялось"] = (
         "измерения по подготовленному кадру на одном ядре CPU; чтение DICOM добавляет около 8 мс на снимок"
     )

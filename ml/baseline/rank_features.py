@@ -4,20 +4,17 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
+from pathlib import Path
 
 import numpy as np
 from scipy.stats import rankdata
 
-SPINE = "Поясничный отдел позвоночника"
-TARGETS = {
-    SPINE: [
-        "Некорректная укладка",
-        "Не выравнена ось позвоночника",
-        "Присутствуют посторонние предметы",
-        "__quality__",
-    ],
-    "Проксимальный отдел бедра": ["Некорректная укладка", "Некорректная область интереса", "__quality__"],
-}
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend" / "app" / "processing"))
+
+from dxaqc.rules import CLOSED_VIOLATIONS  # noqa: E402
+
+TARGETS = {region: [*viols, "__quality__"] for region, viols in CLOSED_VIOLATIONS.items()}
 SKIP = {
     "image_id",
     "study_dir",

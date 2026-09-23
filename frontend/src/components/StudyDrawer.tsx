@@ -45,6 +45,7 @@ function formatCheckValue(c: CheckDetail): string | null {
 }
 
 // Закрытые списки заказчика — те же, что проверяет backend перед сохранением правки.
+// Совпадение с backend сверяет ml/tests/test_closed_lists.py.
 const ALLOWED_VIOLATIONS: Record<string, string[]> = {
   "Поясничный отдел позвоночника": [
     "Некорректная укладка",

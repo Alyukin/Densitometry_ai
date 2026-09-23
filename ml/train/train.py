@@ -1,18 +1,19 @@
 """Обучение с кросс-валидацией по исследованиям (group k-fold) и OOF-метриками.
 
 Пример:
-    python -m train.train --data data/processed --out runs/baseline --backbone resnet18 --epochs 40
+    python -m train.train --data data/processed --out runs/cnn --backbone resnet18 --epochs 40
 
 Результат в `--out`:
     fold{k}.pt          — веса лучшей эпохи каждого фолда
     oof_predictions.csv — предсказания на отложенных фолдах для всех снимков
     metrics.json        — метрики по задачам с 95% ДИ (бутстрэп)
-    config.json         — все параметры запуска (для воспроизводимости)
+    config.json         — все параметры запуска и хеш датасета (для воспроизводимости)
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import random
@@ -26,7 +27,7 @@ from torch.utils.data import DataLoader
 from dxa.labels import REGION_FEMUR, REGION_SPINE
 from train import metrics as M
 from train.dataset import DxaDataset, read_dataset
-from train.model import DxaQualityNet, masked_bce
+from train.model import XRV_BACKBONES, DxaQualityNet, input_spec, masked_bce
 from train.tasks import TASK_INDEX, TASKS
 
 logger = logging.getLogger("train")
@@ -100,8 +101,14 @@ def val_score(P: np.ndarray, T: np.ndarray, Mk: np.ndarray) -> float:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data", default="data/processed", help="папка с dataset.csv и images/")
-    ap.add_argument("--out", default="runs/baseline")
-    ap.add_argument("--backbone", default="resnet18")
+    ap.add_argument("--out", default="runs/cnn")
+    ap.add_argument(
+        "--backbone",
+        default="resnet18",
+        help="resnet18 | resnet34 | resnet50 | efficientnet_b0 (ImageNet) | "
+        + " | ".join(XRV_BACKBONES)
+        + " (веса TorchXRayVision, обучены на рентгенограммах)",
+    )
     ap.add_argument("--no-pretrained", action="store_true")
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--batch-size", type=int, default=32)
@@ -126,7 +133,10 @@ def main() -> None:
     data = Path(args.data)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "config.json").write_text(json.dumps(vars(args), ensure_ascii=False, indent=2), encoding="utf-8")
+    # Хеш таблицы датасета: по нему через полгода видно, на тех ли данных и фолдах
+    # получена метрика. Веса и данные в git не кладутся, поэтому это единственная связь.
+    config = {**vars(args), "dataset_sha256": hashlib.sha256((data / "dataset.csv").read_bytes()).hexdigest()}
+    (out / "config.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
 
     samples = read_dataset(data / "dataset.csv", data)
     logger.info(
@@ -151,8 +161,9 @@ def main() -> None:
         va = [s for s in samples if s.fold == fold]
         if not va:
             continue
-        ds_tr = DxaDataset(tr, size=size, train=True, hflip_femur=args.hflip_femur)
-        ds_va = DxaDataset(va, size=size, train=False)
+        norm = input_spec(args.backbone)
+        ds_tr = DxaDataset(tr, size=size, train=True, hflip_femur=args.hflip_femur, norm=norm)
+        ds_va = DxaDataset(va, size=size, train=False, norm=norm)
         dl_tr = DataLoader(
             ds_tr,
             batch_size=args.batch_size,
@@ -214,7 +225,11 @@ def main() -> None:
         if sel.sum() == 0 or y.sum() == 0:
             result[t.key] = {"n": int(sel.sum()), "note": "нет положительных примеров"}
             continue
-        thr = M.best_threshold(y, p)
+        # Порог объявлен заранее, а не подобран по этим же OOF-предсказаниям: подбор по
+        # тем данным, на которых потом считаются BA и F1, завышает их — на 6 позитивах
+        # заметно. pos_weight уравновешивает классы, поэтому 0.5 — естественная рабочая
+        # точка. ROC AUC и PR AUC от порога не зависят вовсе.
+        thr = 0.5
         result[t.key] = {"label": t.label, **M.summarize(y, p, thr, seed=args.seed)}
     (out / "metrics.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 

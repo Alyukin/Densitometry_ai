@@ -11,13 +11,20 @@ from pathlib import Path
 
 import numpy as np
 
+from .femur import STRUCTURE_REASONS as FEMUR_STRUCTURE_REASONS
 from .femur import measure_femur
 from .image import Spacing
 from .region import REGION_FEMUR, REGION_SPINE, detect, is_dxa_like
-from .rules import Verdict, evaluate, load_thresholds
+from .rules import Verdict, evaluate, load_thresholds, structures_not_found
+from .spine import STRUCTURE_REASONS as SPINE_STRUCTURE_REASONS
 from .spine import measure_spine
 
-VERSION = "rulebased-1.0.0"
+# Отказы разбора, после которых выдаётся вердикт, а не Failure: кость в кадре есть,
+# но обязательные по ТЗ структуры не найдены. «Пустой кадр» и «кость не найдена»
+# остаются отказами — там оценивать нечего.
+STRUCTURE_REASONS = frozenset(FEMUR_STRUCTURE_REASONS + SPINE_STRUCTURE_REASONS)
+
+VERSION = "rulebased-1.1.0"
 
 
 @dataclass
@@ -73,6 +80,21 @@ class Analyzer:
             m = measure_femur(arr, self.spacing, side=side)
 
         meas = {k: v for k, v in asdict(m).items() if isinstance(v, int | float) and not isinstance(v, bool)}
+        if not m.ok and m.reason in STRUCTURE_REASONS:
+            verdict = structures_not_found(region, m.reason)
+            return Analysis(
+                ok=True,
+                region=region,
+                side=side,
+                region_confidence=conf,
+                quality_class=verdict.quality_class,
+                quality_prob=verdict.quality_prob,
+                violations=verdict.violations,
+                explanation=verdict.explanation,
+                measurements={k: round(float(v), 4) for k, v in meas.items()},
+                checks=[c for c in verdict.to_dict()["checks"]],
+                overlay=m.overlay,
+            )
         if not m.ok:
             return Analysis(
                 ok=False,

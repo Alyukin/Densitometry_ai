@@ -1,6 +1,6 @@
 """Инференс: папка с DICOM -> CSV/XLSX в формате выходной таблицы из ТЗ.
 
-    python -m train.predict --input /path/studies --models runs/baseline --out result.csv
+    python -m train.predict --input /path/studies --models runs/cnn --out result.csv
 
 Колонки строго по ТЗ + разрешённая заказчиком `quality_prob`:
     path_to_study, study_uid, image_uid, anatomical_region, quality_class,
@@ -24,7 +24,8 @@ from PIL import Image
 
 from dxa import inventory
 from dxa.labels import REGION_FEMUR, REGION_SPINE
-from train.model import DxaQualityNet
+from train.dataset import to_tensor
+from train.model import DxaQualityNet, input_spec
 from train.tasks import TASK_INDEX, TASKS
 
 logger = logging.getLogger("predict")
@@ -53,7 +54,8 @@ def load_models(models_dir: Path, device: torch.device) -> tuple[list[DxaQuality
     return models, cfg
 
 
-def preprocess(dicom_path: Path, size: tuple[int, int]) -> torch.Tensor:
+def preprocess(dicom_path: Path, size: tuple[int, int], norm: str = "imagenet") -> torch.Tensor:
+    """DICOM -> вход сети. Нормировка та же, что при обучении (`train.dataset.to_tensor`)."""
     import pydicom
 
     ds = pydicom.dcmread(dicom_path, force=True)
@@ -63,8 +65,7 @@ def preprocess(dicom_path: Path, size: tuple[int, int]) -> torch.Tensor:
         lo, hi = np.percentile(a, (0.5, 99.5))
         arr = (np.clip((a - lo) / max(hi - lo, 1e-6), 0, 1) * 255).astype(np.uint8)
     img = Image.fromarray(arr).convert("L").resize((size[1], size[0]), Image.BILINEAR)
-    x = torch.from_numpy(np.asarray(img, dtype=np.float32) / 255.0)[None].repeat(3, 1, 1)
-    return (x - 0.449) / 0.226
+    return to_tensor(np.asarray(img, dtype=np.float32) / 255.0, norm)
 
 
 def predict_folder(
@@ -74,6 +75,7 @@ def predict_folder(
     size: tuple[int, int],
     thresholds: dict[str, float],
     keep_duplicates: bool = False,
+    norm: str = "imagenet",
 ) -> list[dict]:
     records = inventory.scan(input_dir)
     rows: list[dict] = []
@@ -83,7 +85,7 @@ def predict_folder(
         t0 = time.perf_counter()
         status, probs = "success", None
         try:
-            x = preprocess(input_dir / rec.path, size).unsqueeze(0).to(device)
+            x = preprocess(input_dir / rec.path, size, norm).unsqueeze(0).to(device)
             with torch.no_grad():
                 p = np.mean([torch.sigmoid(m(x)).cpu().numpy()[0] for m in models], axis=0)
             probs = p
@@ -100,7 +102,8 @@ def predict_folder(
             "anatomical_region": region,
             "quality_class": "",
             "violation_type": "",
-            "processing_status": status,
+            # по п. 2.5 ТЗ — ровно два значения, как в выгрузке сервиса
+            "processing_status": "Success" if status == "success" else "Failure",
             "time_of_processing": elapsed,
             "quality_prob": "",
         }
@@ -140,7 +143,8 @@ def main() -> None:
     if args.thresholds:
         thresholds.update(json.loads(Path(args.thresholds).read_text(encoding="utf-8")))
 
-    rows = predict_folder(Path(args.input), models, device, size, thresholds)
+    norm = input_spec(cfg.get("backbone", "resnet18"))  # нормировка — как при обучении
+    rows = predict_folder(Path(args.input), models, device, size, thresholds, norm=norm)
     fields = [
         "path_to_study",
         "study_uid",

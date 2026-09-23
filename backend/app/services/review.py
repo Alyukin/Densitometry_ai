@@ -20,21 +20,10 @@ from fastapi import HTTPException, status
 
 from app.models import REVIEW_CONFIRMED, REVIEW_CORRECTED, REVIEW_NONE, ImageResult
 from app.models.study import utcnow
-from app.processing.dxaqc.rules import (
-    REGION_FEMUR,
-    REGION_SPINE,
-    VIOL_FEMUR_ROI,
-    VIOL_FOREIGN,
-    VIOL_POSITION,
-    VIOL_SPINE_AXIS,
-)
+from app.processing.dxaqc.rules import CLOSED_VIOLATIONS
 
-# Закрытые списки заказчика (ответ на вопрос 6). Держим здесь же, чтобы проверка
-# ввода врача и проверка вывода модели ссылались на один источник.
-ALLOWED_VIOLATIONS: dict[str, tuple[str, ...]] = {
-    REGION_SPINE: (VIOL_POSITION, VIOL_SPINE_AXIS, VIOL_FOREIGN),
-    REGION_FEMUR: (VIOL_POSITION, VIOL_FEMUR_ROI),
-}
+# Ввод врача проверяется по тем же закрытым спискам, что и вывод сервиса.
+ALLOWED_VIOLATIONS = CLOSED_VIOLATIONS
 
 
 def allowed_for(region: str | None) -> tuple[str, ...]:
