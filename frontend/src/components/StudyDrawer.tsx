@@ -202,6 +202,7 @@ function ResultCard({
 }) {
   const violations = splitViolations(row.violation_type);
   const ok = row.processing_status === "success";
+  const nonStandard = ok ? (row.details?.non_standard ?? null) : null;
   const checks = row.details?.checks ?? [];
   const [showOverlay, setShowOverlay] = useState(true);
   const src = showOverlay && overlayUrl ? overlayUrl : preview;
@@ -222,17 +223,32 @@ function ResultCard({
       <div className="result__body">
         <div className="result__head">
           <div>
-            <div className="result__title">{ok ? label(REGION_LABELS, row.anatomical_region) : "Ошибка обработки"}</div>
+            <div className="result__title">
+              {!ok ? "Ошибка обработки" : nonStandard ? "Нестандартные данные" : label(REGION_LABELS, row.anatomical_region)}
+            </div>
             <div className="cell-sub mono" title={row.image_uid ?? ""}>
               {row.original_filename ?? row.image_uid}
             </div>
           </div>
-          {ok ? <QualityBadge quality={row.quality_class} /> : <span className="badge badge--failed">{row.processing_status === "timeout" ? "Таймаут" : "Ошибка"}</span>}
+          {!ok ? (
+            <span className="badge badge--failed">{row.processing_status === "timeout" ? "Таймаут" : "Ошибка"}</span>
+          ) : nonStandard ? (
+            <span className="badge badge--warn">Вне задачи</span>
+          ) : (
+            <QualityBadge quality={row.quality_class} />
+          )}
         </div>
 
         {!ok && row.error_message && (
           <div className="alert alert--error">
             <IconAlert size={14} /> {row.error_message}
+          </div>
+        )}
+
+        {nonStandard && (
+          <div className="alert alert--warn">
+            <IconAlert size={14} /> {nonStandard}. Это не снимок поясничного отдела или бедра — качество не
+            оценивается.
           </div>
         )}
 
@@ -433,6 +449,11 @@ export function StudyDrawer({ studyId, summary, onClose, onProcess, onDownload, 
                     {result.summary.errors > 0 && (
                       <div className="warn-text">
                         <b>{result.summary.errors}</b> ошибок
+                      </div>
+                    )}
+                    {result.summary.non_standard > 0 && (
+                      <div className="warn-text">
+                        <b>{result.summary.non_standard}</b> вне задачи
                       </div>
                     )}
                   </div>

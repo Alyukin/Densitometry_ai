@@ -95,7 +95,7 @@ def test_overlay_endpoint_returns_png(rb_client: TestClient, samples: Path) -> N
 
 
 def test_broken_file_is_reported_not_crashed(rb_client: TestClient, samples: Path) -> None:
-    f = samples / "edge_cases" / "no_pixel_data.dcm"
+    f = samples / "edge_cases" / "not_a_dicom.dcm"
     r = upload(rb_client, (f, f.name))
     sid = r.json()["studies"][0]["id"]
     rb_client.post(f"/api/v1/studies/{sid}/process")
@@ -123,7 +123,7 @@ def test_results_are_reproducible(rb_client: TestClient, samples: Path) -> None:
 def test_export_matches_tz_section_2_5(rb_client: TestClient, samples: Path) -> None:
     """П. 2.5 ТЗ: quality_class — Integer 0/1, processing_status — Success / Failure."""
     good = next((samples / "study_spine_02_tilted").glob("*.dcm"))
-    bad = samples / "edge_cases" / "no_pixel_data.dcm"
+    bad = samples / "edge_cases" / "not_a_dicom.dcm"
     sid = upload(rb_client, (good, good.name)).json()["studies"][0]["id"]
     sid_bad = upload(rb_client, (bad, bad.name)).json()["studies"][0]["id"]
     for s in (sid, sid_bad):
@@ -172,3 +172,20 @@ def test_checks_sheet_shows_tz_verdict(rb_client: TestClient, samples: Path) -> 
     col_check = head.index("check") + 1
     names = {ws.cell(r, col_check).value for r in range(2, ws.max_row + 1)}
     assert "spine_axis_tz" in names  # методика ТЗ считается и попадает в отчёт
+
+
+def test_tiny_image_is_non_standard(rb_client: TestClient, samples: Path) -> None:
+    """Кадр 24×24 — не снимок денситометра: Success без области и класса, а не вердикт."""
+    f = samples / "edge_cases" / "tiny.dcm"
+    sid = upload(rb_client, (f, f.name)).json()["studies"][0]["id"]
+    rb_client.post(f"/api/v1/studies/{sid}/process")
+    wait_done(rb_client, sid)
+    row = rb_client.get(f"/api/v1/studies/{sid}/result").json()["rows"][0]
+    assert row["processing_status"] == "success"
+    assert row["anatomical_region"] is None and row["quality_class"] is None
+    assert "маленький" in row["details"]["non_standard"]
+
+    text = rb_client.get(f"/api/v1/studies/{sid}/download?format=csv").content.decode("utf-8")
+    exported = next(csv.DictReader(io.StringIO(text)))
+    assert exported["processing_status"] == "Success"
+    assert exported["anatomical_region"] == exported["quality_class"] == exported["quality_prob"] == ""

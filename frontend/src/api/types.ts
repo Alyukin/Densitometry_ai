@@ -9,6 +9,8 @@ export interface QualitySummary {
   errors: number;
   acceptable: number;
   unacceptable: number;
+  /** Обработано, но это не снимок позвоночника или бедра */
+  non_standard: number;
   regions: string[];
   overall_quality: string | null;
 }
@@ -122,7 +124,14 @@ export interface ResultRow {
   original_filename: string | null;
   confidence: number | null;
   error_message: string | null;
-  details: { checks?: CheckDetail[]; note?: string; mock?: boolean; [k: string]: unknown };
+  details: {
+    checks?: CheckDetail[];
+    note?: string;
+    mock?: boolean;
+    /** Причина, по которой снимок не относится к задаче (Success без области и класса) */
+    non_standard?: string;
+    [k: string]: unknown;
+  };
   // проверка специалистом: автоматический вердикт выше при этом не меняется
   review_status: ReviewStatus;
   reviewed_quality_class: string | null;

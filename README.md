@@ -68,9 +68,10 @@ curl -o result.xlsx "http://localhost:8080/api/v1/batch/download?format=xlsx"
 path_to_study,study_uid,image_uid,anatomical_region,quality_class,violation_type,processing_status,time_of_processing,quality_prob
 ```
 
-`quality_class` — целое 0 или 1, `processing_status` — `Success` или `Failure` (только
-когда оценивать нечего: не DICOM, нет пикселей, пустой кадр), время в секундах, `anatomical_region` и `violation_type` — из закрытых списков заказчика (несколько
-нарушений через `;`). В XLSX есть листы `checks` (проверки с порогами) и `review`.
+`quality_class` — целое 0 или 1, `processing_status` — `Success` или `Failure` (файл не
+открывается или не разбирается как DICOM; строка есть и для него), время в секундах, `anatomical_region` и `violation_type` — из закрытых списков заказчика (несколько
+нарушений через `;`). Если DICOM — не снимок позвоночника или бедра, строка `Success` с
+пустыми областью и классом. В XLSX есть листы `checks` (проверки с порогами) и `review`.
 
 ## Как устроено
 

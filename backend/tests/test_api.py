@@ -86,17 +86,56 @@ def test_upload_zip(client: TestClient, samples: Path) -> None:
     assert sum(s["image_count"] for s in studies) == 10
 
 
-def test_upload_rejects_non_dicom(client: TestClient, samples: Path) -> None:
+def test_non_dicom_file_becomes_a_failure_row(client: TestClient, samples: Path) -> None:
+    """Заказчик: файл не открывается или не разбирается как DICOM — processing_status = Failure.
+
+    Значит, такой файл не отбрасывается при загрузке, а получает строку в выгрузке.
+    """
     r = upload(client, (samples / "edge_cases/not_a_dicom.dcm", "not_a_dicom.dcm"))
-    assert r.status_code == 422
+    assert r.status_code == 201, r.text
+    assert r.json()["rejected"] == []
+    assert any("Failure" in w for w in r.json()["warnings"])
+    sid = r.json()["studies"][0]["id"]
+    client.post(f"/api/v1/studies/{sid}/process")
+    wait_done(client, sid)
+    row = client.get(f"/api/v1/studies/{sid}/result").json()["rows"][0]
+    assert row["processing_status"] == "error"
+    assert "не является DICOM" in row["error_message"]
+
+    text = client.get(f"/api/v1/studies/{sid}/download?format=csv").content.decode("utf-8")
+    line = text.splitlines()[1].split(",")
+    assert line[0] == "not_a_dicom.dcm"  # path_to_study
+    assert "Failure" in line
+
+
+def test_broken_file_joins_the_study_from_its_folder(client: TestClient, samples: Path) -> None:
     r = upload(
         client,
-        (samples / "edge_cases/not_a_dicom.dcm", "not_a_dicom.dcm"),
-        (samples / "study_spine_01/IM0001.dcm", "IM0001.dcm"),
+        (samples / "study_spine_01/IM0001.dcm", "study/IM0001.dcm"),
+        (samples / "edge_cases/not_a_dicom.dcm", "study/IM0002.dcm"),
+    )
+    studies = r.json()["studies"]
+    assert len(studies) == 1 and studies[0]["image_count"] == 2
+    sid = studies[0]["id"]
+    client.post(f"/api/v1/studies/{sid}/process")
+    wait_done(client, sid)
+    rows = client.get(f"/api/v1/studies/{sid}/result").json()["rows"]
+    assert sorted(r["processing_status"] for r in rows) == ["error", "success"]
+    assert {r["path_to_study"] for r in rows} == {"study"}
+
+
+def test_empty_file_is_a_failure_row_but_documents_and_junk_are_skipped(client: TestClient, samples: Path) -> None:
+    empty = samples.parent / "empty.dcm"
+    empty.write_bytes(b"")
+    r = upload(
+        client,
+        (empty, "empty.dcm"),
+        (samples / "edge_cases/not_a_dicom.dcm", "разметка.xlsx"),
+        (samples / "edge_cases/not_a_dicom.dcm", ".DS_Store"),
     )
     assert r.status_code == 201
-    assert len(r.json()["studies"]) == 1
-    assert r.json()["rejected"][0]["filename"] == "not_a_dicom.dcm"
+    assert [x["filename"] for x in r.json()["rejected"]] == ["разметка.xlsx"]
+    assert len(r.json()["studies"]) == 1  # только пустой файл, служебный пропущен молча
 
 
 def test_upload_duplicate_sop_rejected(client: TestClient, samples: Path) -> None:
@@ -163,14 +202,17 @@ def test_results_are_reproducible(client: TestClient, samples: Path) -> None:
     assert [[r[k] for k in key] for r in first] == [[r[k] for k in key] for r in second]
 
 
-def test_image_without_pixels_fails(client: TestClient, samples: Path) -> None:
+def test_dicom_without_pixels_is_non_standard_not_failure(client: TestClient, samples: Path) -> None:
+    """DICOM открывается, но изображения в нём нет: это не Failure, а нестандартные данные."""
     sid = upload(client, (samples / "edge_cases/no_pixel_data.dcm", "nopix.dcm")).json()["studies"][0]["id"]
     client.post(f"/api/v1/studies/{sid}/process")
     st = wait_done(client, sid)
-    assert st["status"] == "failed"
-    res = client.get(f"/api/v1/studies/{sid}/result").json()
-    assert res["rows"][0]["processing_status"] == "error"
-    assert res["rows"][0]["error_message"]
+    assert st["status"] == "completed"
+    row = client.get(f"/api/v1/studies/{sid}/result").json()["rows"][0]
+    assert row["processing_status"] == "success"
+    assert row["anatomical_region"] is None and row["quality_class"] is None
+    assert "нет изображения" in row["details"]["non_standard"]
+    assert row["error_message"] is None
 
 
 def test_batch_process_and_download(client: TestClient, samples: Path) -> None:

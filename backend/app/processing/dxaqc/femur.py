@@ -27,6 +27,8 @@ import numpy as np
 import scipy.ndimage as ndi
 
 from .image import (
+    REASON_EMPTY,
+    REASON_NO_BONE,
     Spacing,
     body_mask,
     bone_mask,
@@ -309,7 +311,7 @@ def measure_femur(arr: np.ndarray, spacing: Spacing | None = None, side: str = "
     ys_f = np.flatnonzero(body.any(axis=1))
     xs_f = np.flatnonzero(body.any(axis=0))
     if len(ys_f) < 20 or len(xs_f) < 20:
-        m.reason = "пустой кадр"
+        m.reason = REASON_EMPTY
         return m
     fy0, fy1, fx0, fx1 = int(ys_f[0]), int(ys_f[-1]), int(xs_f[0]), int(xs_f[-1])
     m.field_h_cm = sp.cm_y(fy1 - fy0 + 1)
@@ -318,7 +320,7 @@ def measure_femur(arr: np.ndarray, spacing: Spacing | None = None, side: str = "
     bone = largest_component(bone_mask(a, body))
     m.bone_frac = float(bone.mean())
     if bone.sum() < 200:
-        m.reason = "кость не найдена"
+        m.reason = REASON_NO_BONE
         return m
 
     track = track_femur(bone)

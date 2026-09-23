@@ -110,6 +110,10 @@ def main() -> None:
         + " (веса TorchXRayVision, обучены на рентгенограммах)",
     )
     ap.add_argument("--no-pretrained", action="store_true")
+    ap.add_argument(
+        "--init-backbone",
+        help="веса бэкбона после предобучения (runs/arak/backbone.pt из train.pretrain); архитектура та же",
+    )
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--lr", type=float, default=3e-4)
@@ -173,7 +177,9 @@ def main() -> None:
         )
         dl_va = DataLoader(ds_va, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
 
-        model = DxaQualityNet(args.backbone, pretrained=not args.no_pretrained).to(device)
+        model = DxaQualityNet(args.backbone, pretrained=not args.no_pretrained, init_backbone=args.init_backbone).to(
+            device
+        )
         opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
         best, best_state, best_epoch = -1.0, None, -1

@@ -1,4 +1,12 @@
-"""Study processing pipeline — independent from the concrete processor (mock / AI)."""
+"""Study processing pipeline — independent from the concrete processor (mock / AI).
+
+Перед процессором каждый файл проходит приём (`app.processing.intake`):
+
+* не разбирается как DICOM — строка с `Failure` и причиной, процессор не вызывается;
+* DICOM открылся, но это не снимок позвоночника или бедра — `Success` без области и
+  класса, с причиной в `details["non_standard"]`;
+* остальное уходит в процессор.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +19,7 @@ from app.core.config import get_settings
 from app.db.session import session_scope
 from app.models import ImageResult, Study, StudyImage, StudyStatus
 from app.models.study import utcnow
+from app.processing import intake
 from app.processing.base import ImageInput, ProcessingError
 from app.processing.registry import get_processor
 
@@ -60,6 +69,7 @@ def process_study(study_id: str) -> None:
         ).all()
         path_to_study = study.source_path or study.storage_dir
         study_uid = study.study_instance_uid
+        invalid = {i.id: i.invalid_reason for i in images if i.invalid_reason}
         inputs = [
             ImageInput(
                 image_id=i.id,
@@ -103,7 +113,10 @@ def process_study(study_id: str) -> None:
             t0 = time.perf_counter()
             pred, err = None, None
             try:
-                pred = processor.predict(inp)
+                if inp.image_id in invalid:
+                    raise ProcessingError(invalid[inp.image_id])
+                reason = intake.inspect(inp.path)
+                pred = intake.non_standard(reason) if reason else processor.predict(inp)
             except ProcessingError as exc:
                 err = str(exc)
             except Exception as exc:  # noqa: BLE001
@@ -123,8 +136,8 @@ def process_study(study_id: str) -> None:
             )
             if pred:
                 ok_count += 1
-                row.anatomical_region = pred.anatomical_region
-                row.quality_class = pred.quality_class
+                row.anatomical_region = pred.anatomical_region or None
+                row.quality_class = pred.quality_class or None
                 row.violation_type = ";".join(pred.violation_types)
                 row.confidence = pred.confidence
                 row.details = pred.details

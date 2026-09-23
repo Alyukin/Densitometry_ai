@@ -60,6 +60,7 @@ class QualitySummary(BaseModel):
     errors: int = 0
     acceptable: int = 0
     unacceptable: int = 0
+    non_standard: int = Field(default=0, description="Обработано, но это не снимок позвоночника или бедра")
     regions: list[str] = Field(default_factory=list)
     overall_quality: str | None = Field(
         default=None, description="unacceptable, если хотя бы одно изображение с нарушением"

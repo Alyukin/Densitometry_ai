@@ -37,7 +37,9 @@ ExportSource = Literal["auto", "reviewed"]
     summary="Загрузка DICOM-файлов",
     description=(
         "Принимает один или несколько DICOM-файлов (`.dcm` или без расширения) и/или ZIP-архивы. "
-        "Файлы группируются в исследования по `StudyInstanceUID`. Невалидные файлы возвращаются в `rejected`."
+        "Файлы группируются в исследования по `StudyInstanceUID`. Файл, который не разбирается как DICOM, "
+        "тоже принимается: в результатах у него будет строка с `processing_status = Failure`. В `rejected` "
+        "попадают только служебные файлы (DICOMDIR) и документы (таблицы, PDF, текст)."
     ),
 )
 async def upload_studies(

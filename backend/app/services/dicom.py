@@ -18,7 +18,11 @@ DICOMDIR_SOP_CLASS = "1.2.840.10008.1.3.10"
 
 
 class DicomValidationError(Exception):
-    pass
+    """Файл не открывается или не разбирается как DICOM — в выгрузке это Failure."""
+
+
+class NotAnImageFile(DicomValidationError):
+    """Служебный DICOM (DICOMDIR): не снимок, строки в выгрузке для него нет."""
 
 
 @dataclass
@@ -66,7 +70,7 @@ def read_metadata(path: Path) -> DicomMeta:
 
     media_sop = getattr(getattr(ds, "file_meta", None), "MediaStorageSOPClassUID", None)
     if media_sop == DICOMDIR_SOP_CLASS or "DirectoryRecordSequence" in ds:
-        raise DicomValidationError("DICOMDIR пропущен (служебный индексный файл)")
+        raise NotAnImageFile("DICOMDIR пропущен (служебный индексный файл)")
 
     return DicomMeta(
         study_instance_uid=_str(ds, "StudyInstanceUID"),

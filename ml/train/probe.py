@@ -32,7 +32,7 @@ from sklearn.preprocessing import StandardScaler
 from dxa.labels import REGION_FEMUR, REGION_SPINE, VIOL_FEMUR_ROI, VIOL_FOREIGN, VIOL_POSITION, VIOL_SPINE_AXIS
 from train import metrics as M
 from train.dataset import DxaDataset, read_dataset
-from train.model import build_backbone, input_spec
+from train.model import build_backbone, input_spec, load_backbone_weights
 from train.tasks import TASKS, targets_for
 
 logger = logging.getLogger("probe")
@@ -68,9 +68,12 @@ def extract(  # noqa: ANN201
     device: torch.device,
     pretrained: bool = True,
     batch: int = 16,
+    init: str | None = None,
 ):
     torch.manual_seed(0)  # случайные веса контроля тоже должны воспроизводиться
     net, _ = build_backbone(backbone, pretrained=pretrained)
+    if init:
+        load_backbone_weights(net, init)
     net.eval().to(device)
     ds = DxaDataset(samples, size=size, train=False, norm=input_spec(backbone))
     feats = []
@@ -146,6 +149,10 @@ def main() -> None:
     ap.add_argument("--C", type=float, default=0.1, help="сила L2-регуляризации, задана заранее")
     ap.add_argument("--min-specificity", type=float, default=0.70)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument(
+        "--init-backbone",
+        help="веса после предобучения (train.pretrain): добавляет одну конфигурацию xrv-densenet121 384x320 с ними",
+    )
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -155,17 +162,23 @@ def main() -> None:
     device = torch.device(args.device)
     torch.manual_seed(0)
 
+    configs = [(*c, None) for c in DEFAULT_CONFIGS]
+    if args.init_backbone:
+        # ровно одна дополнительная конфигурация: сравнение с XRV 384x320 объявлено заранее
+        configs.append(("xrv-densenet121", 384, 320, True, args.init_backbone))
+
     results: dict = {}
     skipped: dict[str, str] = {}
-    for backbone, h, w, pretrained in DEFAULT_CONFIGS:
-        name = f"{backbone} {h}x{w}" + ("" if pretrained else " случайные веса")
-        cache = out / f"features_{backbone}_{h}x{w}{'' if pretrained else '_random'}.npy"
+    for backbone, h, w, pretrained, init in configs:
+        tag = Path(init).parent.name if init else ""
+        name = f"{backbone} {h}x{w}" + ("" if pretrained else " случайные веса") + (f" + {tag}" if tag else "")
+        cache = out / f"features_{backbone}_{h}x{w}{'' if pretrained else '_random'}{f'_{tag}' if tag else ''}.npy"
         t0 = time.time()
-        if cache.exists():
+        if cache.exists() and not init:
             X = np.load(cache)
         else:
             try:
-                X = extract(samples, backbone, (h, w), device, pretrained=pretrained)
+                X = extract(samples, backbone, (h, w), device, pretrained=pretrained, init=init)
             except Exception as exc:  # noqa: BLE001 — нет сети до весов: пропускаем, а не падаем
                 skipped[name] = f"{type(exc).__name__}: {exc}"[:200]
                 logger.warning("%s пропущен: веса недоступны (%s)", name, skipped[name])

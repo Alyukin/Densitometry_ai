@@ -5,6 +5,8 @@
 #   bash ml/train.sh
 #
 # Первый аргумент (или переменная DATA_ROOT) — папка Densitometry_data.
+# ARAK=1 — перед обучением предобучить бэкбон на открытом наборе Arak
+# (Densitometry_data/ArakDATA): BACKBONE=xrv-densenet121 ARAK=1 bash ml/train.sh
 # Скрипт ничего не пишет в исходные данные, всё складывает в ml/data и ml/runs.
 set -euo pipefail
 
@@ -12,7 +14,8 @@ cd "$(dirname "$0")"
 
 DATA_ROOT="${1:-${DATA_ROOT:-../../Densitometry_data}}"
 OUT_DATA="${OUT_DATA:-data/processed}"
-OUT_RUN="${OUT_RUN:-runs/cnn}"
+ARAK="${ARAK:-0}"
+OUT_RUN="${OUT_RUN:-runs/cnn$([ "$ARAK" = "1" ] && echo _arak || true)}"
 EPOCHS="${EPOCHS:-40}"
 BACKBONE="${BACKBONE:-resnet18}"
 BATCH="${BATCH:-16}"
@@ -50,12 +53,29 @@ build_backbone(sys.argv[1], pretrained=True)
 print(f"веса {sys.argv[1]} на месте")
 PY
 
+INIT_ARGS=()
+if [ "$ARAK" = "1" ]; then
+  echo
+  echo "== предобучение бэкбона на открытом наборе Arak =="
+  if [ ! -d "$DATA_ROOT/ArakDATA" ]; then
+    echo "Нет папки $DATA_ROOT/ArakDATA" >&2
+    exit 1
+  fi
+  ARAK_DATA="${ARAK_DATA:-data/arak}"
+  ARAK_RUN="${ARAK_RUN:-runs/arak}"
+  python3 -m dxa.arak --data-root "$DATA_ROOT" --out "$ARAK_DATA"
+  python3 -m train.pretrain --data "$ARAK_DATA" --out "$ARAK_RUN" \
+    --backbone "$BACKBONE" --epochs "${ARAK_EPOCHS:-15}" --batch-size "$BATCH"
+  INIT_ARGS=(--init-backbone "$ARAK_RUN/backbone.pt")
+fi
+
 python3 -m train.train \
   --data "$OUT_DATA" \
   --out "$OUT_RUN" \
   --backbone "$BACKBONE" \
   --epochs "$EPOCHS" \
-  --batch-size "$BATCH"
+  --batch-size "$BATCH" \
+  ${INIT_ARGS[@]+"${INIT_ARGS[@]}"}
 
 echo
 echo "Готово."

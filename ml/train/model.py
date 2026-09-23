@@ -75,6 +75,18 @@ def build_backbone(name: str, pretrained: bool = True) -> tuple[nn.Module, int]:
     return net, feat
 
 
+def load_backbone_weights(backbone: nn.Module, path: str) -> dict:
+    """Подгружает веса бэкбона, сохранённые предобучением (`train.pretrain`).
+
+    Архитектура должна совпадать: загрузка строгая, чтобы тихо не получить наполовину
+    случайную сеть.
+    """
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    state = ckpt.get("state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+    backbone.load_state_dict(state, strict=True)
+    return ckpt if isinstance(ckpt, dict) else {}
+
+
 class DxaQualityNet(nn.Module):
     """Один бэкбон, по голове на каждую задачу из TASKS.
 
@@ -82,9 +94,17 @@ class DxaQualityNet(nn.Module):
     поэтому обе области обучаются совместно и делят представление.
     """
 
-    def __init__(self, backbone: str = "resnet18", pretrained: bool = True, dropout: float = 0.2) -> None:
+    def __init__(
+        self,
+        backbone: str = "resnet18",
+        pretrained: bool = True,
+        dropout: float = 0.2,
+        init_backbone: str | None = None,
+    ) -> None:
         super().__init__()
         self.backbone, feat = build_backbone(backbone, pretrained)
+        if init_backbone:
+            load_backbone_weights(self.backbone, init_backbone)
         self.dropout = nn.Dropout(dropout)
         self.head = nn.Linear(feat, len(TASKS))
         nn.init.zeros_(self.head.bias)

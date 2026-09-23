@@ -13,7 +13,7 @@ import numpy as np
 
 from .femur import STRUCTURE_REASONS as FEMUR_STRUCTURE_REASONS
 from .femur import measure_femur
-from .image import Spacing
+from .image import NON_STANDARD_REASONS, Spacing
 from .region import REGION_FEMUR, REGION_SPINE, detect, is_dxa_like
 from .rules import Verdict, evaluate, load_thresholds, structures_not_found
 from .spine import STRUCTURE_REASONS as SPINE_STRUCTURE_REASONS
@@ -41,6 +41,8 @@ class Analysis:
     checks: list[dict] = field(default_factory=list)
     overlay: dict = field(default_factory=dict)
     error: str = ""
+    # Не снимок позвоночника или бедра: вердикта нет, это не отказ (см. app.processing.intake)
+    non_standard: str = ""
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -66,7 +68,7 @@ class Analyzer:
     ) -> Analysis:
         ok, why = is_dxa_like(arr)
         if not ok:
-            return Analysis(ok=False, error=why)
+            return Analysis(ok=False, error=why, non_standard=f"{why}: кадр не похож на снимок денситометра")
 
         if region in (REGION_SPINE, REGION_FEMUR):
             side = "" if region == REGION_SPINE else detect(arr)[1]
@@ -80,6 +82,13 @@ class Analyzer:
             m = measure_femur(arr, self.spacing, side=side)
 
         meas = {k: v for k, v in asdict(m).items() if isinstance(v, int | float) and not isinstance(v, bool)}
+        if not m.ok and m.reason in NON_STANDARD_REASONS:
+            return Analysis(
+                ok=False,
+                region=region,
+                error=m.reason,
+                non_standard=f"{m.reason}: кадр не похож на снимок позвоночника или бедра",
+            )
         if not m.ok and m.reason in STRUCTURE_REASONS:
             verdict = structures_not_found(region, m.reason)
             return Analysis(

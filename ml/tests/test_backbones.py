@@ -21,7 +21,13 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ml"))
 
 from train.dataset import to_tensor  # noqa: E402
-from train.model import XRV_BACKBONES, DxaQualityNet, build_backbone, input_spec  # noqa: E402
+from train.model import (  # noqa: E402
+    XRV_BACKBONES,
+    DxaQualityNet,
+    build_backbone,
+    input_spec,
+    load_backbone_weights,
+)
 from train.tasks import TASKS  # noqa: E402
 
 
@@ -85,3 +91,26 @@ def test_xrv_backbone_keeps_the_requested_resolution() -> None:
         small = backbone.features(torch.zeros(1, 1, 224, 224)).shape[-2:]
     assert big != small
     assert big[0] > small[0]
+
+
+def test_pretrained_backbone_weights_are_loaded(tmp_path: Path) -> None:
+    """Веса после предобучения (train.pretrain) доходят до модели, а не теряются молча."""
+    src, _ = build_backbone("resnet18", pretrained=False)
+    with torch.no_grad():
+        for p in src.parameters():
+            p.fill_(0.123)
+    path = tmp_path / "backbone.pt"
+    torch.save({"backbone": "resnet18", "state_dict": src.state_dict()}, path)
+
+    net = DxaQualityNet("resnet18", pretrained=False, init_backbone=str(path))
+    first = next(net.backbone.parameters())
+    assert torch.allclose(first, torch.full_like(first, 0.123))
+
+
+def test_wrong_architecture_is_refused(tmp_path: Path) -> None:
+    src, _ = build_backbone("resnet18", pretrained=False)
+    path = tmp_path / "backbone.pt"
+    torch.save({"state_dict": src.state_dict()}, path)
+    other, _ = build_backbone("resnet34", pretrained=False)
+    with pytest.raises(RuntimeError):
+        load_backbone_weights(other, str(path))

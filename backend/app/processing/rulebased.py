@@ -22,11 +22,11 @@ from pathlib import Path
 
 import numpy as np
 import pydicom
-from pydicom.errors import InvalidDicomError
 
 from app.processing.base import BaseProcessor, ImageInput, ImagePrediction, ProcessingError
 from app.processing.dxaqc.analyze import VERSION, Analyzer
 from app.processing.dxaqc.image import PIXEL_MM_X, PIXEL_MM_Y, Spacing
+from app.processing.intake import non_standard
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def read_pixels(path: Path) -> tuple[np.ndarray, pydicom.Dataset]:
     try:
         ds = pydicom.dcmread(path, force=True)
         arr = ds.pixel_array
-    except (InvalidDicomError, AttributeError, ValueError, TypeError) as exc:
+    except Exception as exc:  # noqa: BLE001 — любой сбой декодера: файл не разбирается, это Failure
         raise ProcessingError(f"Не удалось прочитать пиксельные данные DICOM: {exc}") from exc
     if arr.ndim == 3:  # многокадровый или цветной — берём первый кадр / яркость
         arr = arr[0] if arr.shape[-1] not in (3, 4) else arr[..., 0]
@@ -92,6 +92,8 @@ class RuleBasedProcessor(BaseProcessor):
             series_description=str(ds.get("SeriesDescription", "") or "") or None,
             protocol_name=str(ds.get("ProtocolName", "") or "") or None,
         )
+        if res.non_standard:
+            return non_standard(res.non_standard)
         if not res.ok:
             raise ProcessingError(res.error or "Не удалось выполнить измерения")
 

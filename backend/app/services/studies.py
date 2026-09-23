@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.config import Settings
 from app.models import ACTIVE_STATUSES, ImageResult, Study, StudyImage, StudyStatus
 from app.models.study import utcnow
+from app.processing.intake import NON_STANDARD_KEY
 from app.schemas.study import (
     ImageOut,
     QualitySummary,
@@ -41,7 +42,9 @@ def build_summary(results: list[ImageResult]) -> QualitySummary | None:
     for r in results:
         if r.processing_status == "success":
             s.success += 1
-            if (r.quality_class or "").lower() in QUALITY_BAD_VALUES:
+            if (r.details or {}).get(NON_STANDARD_KEY):
+                s.non_standard += 1
+            elif (r.quality_class or "").lower() in QUALITY_BAD_VALUES:
                 s.unacceptable += 1
             else:
                 s.acceptable += 1
@@ -50,7 +53,7 @@ def build_summary(results: list[ImageResult]) -> QualitySummary | None:
         else:
             s.errors += 1
     s.regions = regions
-    if s.success:
+    if s.success > s.non_standard:
         s.overall_quality = "unacceptable" if s.unacceptable else "acceptable"
     return s
 

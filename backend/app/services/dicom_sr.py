@@ -34,6 +34,7 @@ from pydicom.sequence import Sequence
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
 from app.models import REVIEW_CONFIRMED, REVIEW_CORRECTED, ImageResult, Study
+from app.processing.intake import NON_STANDARD_KEY
 
 COMPREHENSIVE_SR = "1.2.840.10008.5.1.4.1.1.88.33"
 SECONDARY_CAPTURE = "1.2.840.10008.5.1.4.1.1.7"
@@ -198,8 +199,15 @@ def _image_container(result: ImageResult, sop_class_uid: str, sop_uid: str | Non
     content: list[Dataset] = []
     if sop_uid:
         content.append(_image_ref(sop_class_uid, sop_uid))
-    content.append(_text("REGION", "Анатомическая область", result.anatomical_region or ""))
-    content.append(_text("QCLASS", "Класс качества (0 — годно, 1 — нарушение)", result.quality_class or ""))
+    # TEXT в SR не бывает пустым (TextValue — тип 1), поэтому для отказа и нестандартных
+    # данных пишется, почему значения нет
+    non_standard = (result.details or {}).get(NON_STANDARD_KEY)
+    content.append(_text("REGION", "Анатомическая область", result.anatomical_region or "не определена"))
+    content.append(
+        _text("QCLASS", "Класс качества (0 — годно, 1 — нарушение)", result.quality_class or "не оценивался")
+    )
+    if non_standard:
+        content.append(_text("NONSTD", "Нестандартные данные", non_standard))
     content.append(_text("VIOL", "Тип нарушения", result.violation_type or "нарушений не найдено"))
     if result.confidence is not None:
         content.append(_num("QPROB", "Вероятность нарушения", float(result.confidence), ""))
@@ -347,13 +355,18 @@ def build_sr(study: Study, results: list[ImageResult], data_dir: Path) -> FileDa
 
 def _summary_text(results: list[ImageResult]) -> str:
     ok = [r for r in results if r.processing_status == "success"]
-    bad = [r for r in ok if (r.final_quality_class or "") == "1"]
+    assessed = [r for r in ok if not (r.details or {}).get(NON_STANDARD_KEY)]
+    other = len(ok) - len(assessed)
+    tail = f"; нестандартных данных: {other}" if other else ""
+    bad = [r for r in assessed if (r.final_quality_class or "") == "1"]
     if not ok:
         return "Ни одно изображение не удалось обработать"
+    if not assessed:
+        return f"Снимков позвоночника или бедра нет{tail}"
     if not bad:
-        return f"Нарушений не найдено ({len(ok)} изображений)"
+        return f"Нарушений не найдено ({len(assessed)} изображений){tail}"
     viol = sorted({v for r in bad for v in (r.final_violation_type or "").split(";") if v})
-    return f"Нарушения на {len(bad)} из {len(ok)} изображений: {', '.join(viol)}"
+    return f"Нарушения на {len(bad)} из {len(assessed)} изображений: {', '.join(viol)}{tail}"
 
 
 def build_secondary_capture(

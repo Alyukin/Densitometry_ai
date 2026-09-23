@@ -336,3 +336,22 @@ def test_sr_has_all_type2_attributes(rb_client: TestClient, processed) -> None:
         "PerformedProcedureCodeSequence",
     ):
         assert tag in ds, tag
+
+
+def test_sr_explains_non_standard_and_failed_images(rb_client: TestClient, samples: Path) -> None:
+    """У нестандартного снимка и у отказа в SR нет пустых TEXT (TextValue — тип 1)."""
+    for name in ("tiny.dcm", "not_a_dicom.dcm"):
+        f = samples / "edge_cases" / name
+        sid = upload(rb_client, (f, f.name)).json()["studies"][0]["id"]
+        rb_client.post(f"/api/v1/studies/{sid}/process")
+        wait_done(rb_client, sid)
+        ds = pydicom.dcmread(io.BytesIO(rb_client.get(f"/api/v1/studies/{sid}/sr").content))
+        texts = _texts(ds)
+        assert all(v.strip() for v in texts.values()), texts
+        assert texts["Анатомическая область"] == "не определена"
+        assert texts["Класс качества (0 — годно, 1 — нарушение)"] == "не оценивался"
+        if name == "tiny.dcm":
+            assert "маленький" in texts["Нестандартные данные"]
+            assert texts["Статус обработки"] == "Success"
+        else:
+            assert texts["Статус обработки"] == "Failure"

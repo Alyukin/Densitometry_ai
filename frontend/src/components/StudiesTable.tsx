@@ -201,6 +201,9 @@ export function StudiesTable(p: Props) {
                           {s.summary.errors} {pluralRu(s.summary.errors, "ошибка", "ошибки", "ошибок")}
                         </span>
                       )}
+                      {s.status === "completed" && s.summary && s.summary.non_standard > 0 && (
+                        <span className="cell-sub warn-text">{s.summary.non_standard} вне задачи</span>
+                      )}
                     </div>
                   </td>
                   <td>

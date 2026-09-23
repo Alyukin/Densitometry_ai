@@ -34,6 +34,8 @@ import numpy as np
 import scipy.ndimage as ndi
 
 from .image import (
+    REASON_EMPTY,
+    REASON_NO_BONE,
     Spacing,
     body_mask,
     bone_mask,
@@ -271,12 +273,15 @@ def measure_spine(arr: np.ndarray, spacing: Spacing | None = None) -> SpineMeasu
     ys_f = np.flatnonzero(body.any(axis=1))
     xs_f = np.flatnonzero(body.any(axis=0))
     if len(ys_f) == 0 or len(xs_f) == 0:
-        m.reason = "пустой кадр"
+        m.reason = REASON_EMPTY
         return m
     m.field_h_cm = sp.cm_y(len(ys_f))
     m.field_w_cm = sp.cm_x(len(xs_f))
 
     bone = bone_mask(a, body)
+    if bone.sum() < 200:  # тот же порог, что у бедра
+        m.reason = REASON_NO_BONE
+        return m
     runs = _column_runs(bone, body)
     if runs is None:
         m.reason = REASON_NO_COLUMN

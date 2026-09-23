@@ -6,3 +6,5 @@ numpy==2.4.6
 scipy==1.17.1
 pillow==12.3.0
 openpyxl==3.1.5
+# снятие разметки сканера с открытого набора Arak (dxa.arak)
+opencv-python-headless==4.13.0.92

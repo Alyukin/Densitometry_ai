@@ -89,6 +89,10 @@ class StudyImage(Base):
     rows: Mapped[int | None] = mapped_column(Integer)
     columns: Mapped[int | None] = mapped_column(Integer)
     has_pixel_data: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Файл не открывается или не разбирается как DICOM. Он всё равно попадает в
+    # исследование, чтобы в выгрузке была строка с processing_status = Failure
+    # (так заказчик определил Failure), а здесь записана причина.
+    invalid_reason: Mapped[str | None] = mapped_column(String(255))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

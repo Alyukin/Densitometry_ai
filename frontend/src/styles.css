@@ -637,6 +637,11 @@ input[type="checkbox"] {
   color: var(--danger);
   border-color: transparent;
 }
+.badge--warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: transparent;
+}
 .badge--q-ok {
   background: var(--ok-soft);
   color: var(--ok);

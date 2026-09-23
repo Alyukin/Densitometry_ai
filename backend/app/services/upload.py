@@ -1,4 +1,11 @@
-"""Upload handling: stream files to disk, unpack ZIP archives, validate DICOM, group by StudyInstanceUID."""
+"""Upload handling: stream files to disk, unpack ZIP archives, validate DICOM, group by StudyInstanceUID.
+
+Файл, который не открывается или не разбирается как DICOM, не отбрасывается: по
+определению заказчика это строка с processing_status = Failure. Такой файл
+сохраняется как изображение с причиной (`invalid_reason`) и получает свою строку в
+выгрузке. Пропускаются без строки только служебные файлы (DICOMDIR, .DS_Store,
+__MACOSX) и документы рядом с данными (таблицы, PDF, текст) — это не снимки.
+"""
 
 from __future__ import annotations
 
@@ -18,13 +25,15 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.models import Study, StudyImage
 from app.models.study import new_id
-from app.services.dicom import DicomMeta, DicomValidationError, read_metadata
+from app.services.dicom import DicomMeta, DicomValidationError, NotAnImageFile, read_metadata
 
 logger = logging.getLogger(__name__)
 
 CHUNK = 1024 * 1024
 ZIP_MAGIC = b"PK\x03\x04"
 SKIP_NAMES = {".ds_store", "thumbs.db", "desktop.ini"}
+# Документы, которые лежат рядом со снимками (разметка, отчёты), — не входные данные
+DOCUMENT_SUFFIXES = (".txt", ".json", ".xml", ".csv", ".xlsx", ".xls", ".pdf", ".doc", ".docx", ".md", ".html", ".log")
 
 
 class UploadLimitError(Exception):
@@ -42,6 +51,12 @@ class _Candidate:
 class _Valid:
     cand: _Candidate
     meta: DicomMeta
+
+
+@dataclass
+class _Invalid:
+    cand: _Candidate
+    reason: str
 
 
 @dataclass
@@ -64,14 +79,14 @@ def _is_zip(path: Path, name: str) -> bool:
         return fh.read(4) == ZIP_MAGIC
 
 
-def _should_skip(name: str) -> bool:
+def _is_junk(name: str) -> bool:
+    """Служебные файлы ОС и архиваторов — пропускаются молча."""
     base = posixpath.basename(name).lower()
-    return (
-        base in SKIP_NAMES
-        or base.startswith("._")
-        or "__macosx/" in name.lower()
-        or base.endswith((".txt", ".json", ".xml", ".csv", ".xlsx", ".pdf", ".jpg", ".png"))
-    )
+    return base in SKIP_NAMES or base.startswith("._") or "__macosx/" in name.lower()
+
+
+def _is_document(name: str) -> bool:
+    return posixpath.basename(name).lower().endswith(DOCUMENT_SUFFIXES)
 
 
 class UploadService:
@@ -101,7 +116,10 @@ class UploadService:
                         continue
                     inner = _clean_name(info.filename)
                     display = f"{zname}/{inner}"
-                    if _should_skip(inner):
+                    if _is_junk(inner):
+                        continue
+                    if _is_document(inner):
+                        out.rejected.append({"filename": display, "reason": "Документ, а не снимок: пропущен"})
                         continue
                     self._total_bytes += info.file_size
                     if self._total_bytes > self.settings.max_upload_size_bytes:
@@ -130,12 +148,12 @@ class UploadService:
                 name = _clean_name(up.filename)
                 tmp = workdir / uuid.uuid4().hex
                 size = await self._save_stream(up, tmp)
-                if size == 0:
-                    out.rejected.append({"filename": name, "reason": "Пустой файл"})
-                elif _is_zip(tmp, name):
+                if _is_junk(name):
+                    continue
+                if size > 0 and _is_zip(tmp, name):
                     zips.append((tmp, name))
-                elif _should_skip(name):
-                    out.rejected.append({"filename": name, "reason": "Не DICOM (пропущен по типу файла)"})
+                elif _is_document(name):
+                    out.rejected.append({"filename": name, "reason": "Документ, а не снимок: пропущен"})
                 else:
                     candidates.append(_Candidate(name, tmp, size))
 
@@ -158,27 +176,93 @@ class UploadService:
             zpath.unlink(missing_ok=True)
 
         valid: list[_Valid] = []
+        invalid: list[_Invalid] = []
         for c in candidates:
+            if c.size == 0:
+                invalid.append(_Invalid(c, "Пустой файл"))
+                continue
             try:
                 valid.append(_Valid(c, read_metadata(c.path)))
-            except DicomValidationError as exc:
+            except NotAnImageFile as exc:
                 out.rejected.append({"filename": c.original_name, "reason": str(exc)})
+            except DicomValidationError as exc:
+                invalid.append(_Invalid(c, str(exc)))
 
         groups: OrderedDict[str, list[_Valid]] = OrderedDict()
         for v in valid:
             key = v.meta.study_instance_uid or f"__single__{v.cand.original_name}"
             groups.setdefault(key, []).append(v)
 
-        for items in groups.values():
-            study = self._create_study(items, out)
+        # Нераспознанный файл кладётся к исследованию из той же папки, если оно там
+        # одно; иначе становится отдельным исследованием. Строка Failure в выгрузке
+        # будет в обоих случаях.
+        by_dir: dict[str, set[str]] = {}
+        for key, items in groups.items():
+            for v in items:
+                by_dir.setdefault(posixpath.dirname(v.cand.original_name), set()).add(key)
+        attached: dict[str, list[_Invalid]] = {}
+        standalone: list[_Invalid] = []
+        for bad in invalid:
+            keys = by_dir.get(posixpath.dirname(bad.cand.original_name), set())
+            if posixpath.dirname(bad.cand.original_name) and len(keys) == 1:
+                attached.setdefault(next(iter(keys)), []).append(bad)
+            else:
+                standalone.append(bad)
+            out.warnings.append(
+                f"{bad.cand.original_name}: {bad.reason} — в результатах будет строка со статусом Failure"
+            )
+
+        for key, items in groups.items():
+            study = self._create_study(items, out, attached.get(key, []))
             if study is not None:
                 out.studies.append(study)
+        for bad in standalone:
+            out.studies.append(self._create_invalid_study(bad))
 
         self.db.commit()
         for s in out.studies:
             self.db.refresh(s)
 
-    def _create_study(self, items: list[_Valid], out: UploadOutcome) -> Study | None:
+    def _new_study_dir(self) -> tuple[str, Path, Path]:
+        study_id = new_id()
+        rel_dir = Path("uploads") / study_id
+        abs_dir = self.settings.data_dir / rel_dir
+        abs_dir.mkdir(parents=True, exist_ok=True)
+        self._created_dirs.append(abs_dir)
+        return study_id, rel_dir, abs_dir
+
+    def _invalid_image(self, bad: _Invalid, rel_dir: Path) -> StudyImage:
+        image_id = new_id()
+        rel_path = rel_dir / f"{image_id}.bin"
+        shutil.move(str(bad.cand.path), self.settings.data_dir / rel_path)
+        return StudyImage(
+            id=image_id,
+            original_filename=bad.cand.original_name[:1024],
+            stored_path=str(rel_path),
+            size_bytes=bad.cand.size,
+            has_pixel_data=False,
+            invalid_reason=bad.reason[:255],
+        )
+
+    def _create_invalid_study(self, bad: _Invalid) -> Study:
+        """Отдельное «исследование» из одного нераспознанного файла — ради строки Failure."""
+        study_id, rel_dir, _ = self._new_study_dir()
+        name = posixpath.basename(bad.cand.original_name) or bad.cand.original_name
+        study = Study(
+            id=study_id,
+            name=name[:255],
+            source_path=posixpath.dirname(bad.cand.original_name) or bad.cand.original_name,
+            storage_dir=str(rel_dir),
+            warnings=[f"{bad.reason}: в результатах будет строка с processing_status = Failure"],
+        )
+        self.db.add(study)
+        study.images.append(self._invalid_image(bad, rel_dir))
+        return study
+
+    def _create_study(
+        self, items: list[_Valid], out: UploadOutcome, invalid: list[_Invalid] | None = None
+    ) -> Study | None:
+        invalid = invalid or []
         seen: set[str] = set()
         unique: list[_Valid] = []
         for v in items:
@@ -190,15 +274,11 @@ class UploadService:
                 seen.add(uid)
             unique.append(v)
         if not unique:
+            out.studies.extend(self._create_invalid_study(bad) for bad in invalid)
             return None
 
         first = unique[0]
-        study_id = new_id()
-        rel_dir = Path("uploads") / study_id
-        abs_dir = self.settings.data_dir / rel_dir
-
-        abs_dir.mkdir(parents=True, exist_ok=True)
-        self._created_dirs.append(abs_dir)
+        study_id, rel_dir, _ = self._new_study_dir()
 
         dirs = {posixpath.dirname(v.cand.original_name) for v in unique}
         common_dir = next(iter(dirs)) if len(dirs) == 1 else ""
@@ -252,5 +332,7 @@ class UploadService:
                     has_pixel_data=m.has_pixel_data,
                 )
             )
+        for bad in invalid:
+            study.images.append(self._invalid_image(bad, rel_dir))
         out.warnings.extend(f"{name}: {w}" for w in warnings)
         return study
