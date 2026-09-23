@@ -124,12 +124,19 @@ def fit_stats(rows: list[dict]) -> dict:
     return stats
 
 
+def _autocast(device: torch.device, amp: bool):  # noqa: ANN202
+    dtype = torch.float16 if device.type == "cuda" else torch.bfloat16
+    return torch.autocast(device.type, dtype=dtype, enabled=amp)
+
+
 @torch.no_grad()
-def evaluate(model: nn.Module, loader: DataLoader, rows: list[dict], device: torch.device) -> dict:
+def evaluate(model: nn.Module, loader: DataLoader, rows: list[dict], device: torch.device, amp: bool = False) -> dict:
     model.eval()
     outs, ys = [], []
     for x, y, _ in loader:
-        outs.append(model(x.to(device)).cpu())
+        with _autocast(device, amp):
+            out = model(x.to(device))
+        outs.append(out.float().cpu())
         ys.append(y)
     o, y = torch.cat(outs).numpy(), torch.cat(ys).numpy()
     res = {"region_accuracy": float(((o[:, 0] > 0) == (y[:, 0] > 0.5)).mean())}
@@ -173,6 +180,7 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--amp", action="store_true", help="смешанная точность (fp16 на GPU) — для карт с малой памятью")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -204,6 +212,7 @@ def main() -> None:
     freeze_first_blocks(model.backbone, args.freeze_blocks)
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(args.epochs, 1))
+    scaler = torch.amp.GradScaler("cuda", enabled=args.amp and device.type == "cuda")
     logger.info("Arak: обучение %d снимков, контроль %d, %s %s", len(train_rows), len(val_rows), args.backbone, size)
 
     history, best = [], None
@@ -212,13 +221,20 @@ def main() -> None:
         t0, total, n = time.time(), 0.0, 0
         for x, y, m in train_dl:
             x, y, m = x.to(device), y.to(device), m.to(device)
-            loss = loss_fn(model(x), y, m)
+            with _autocast(device, args.amp):
+                pred = model(x)
+            loss = loss_fn(pred.float(), y, m)
             opt.zero_grad()
-            loss.backward()
-            opt.step()
+            if scaler.is_enabled():
+                scaler.scale(loss).backward()
+                scaler.step(opt)
+                scaler.update()
+            else:
+                loss.backward()
+                opt.step()
             total, n = total + float(loss) * len(x), n + len(x)
         sched.step()
-        val = evaluate(model, val_dl, val_rows, device)
+        val = evaluate(model, val_dl, val_rows, device, args.amp)
         val_score = val.get("bmd_r2_spine", 0.0) + val.get("bmd_r2_femur", 0.0)
         history.append({"epoch": epoch, "train_loss": total / max(n, 1), **val, "min": (time.time() - t0) / 60})
         logger.info("эпоха %d: %s", epoch, json.dumps(history[-1], ensure_ascii=False))

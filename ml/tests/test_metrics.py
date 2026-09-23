@@ -158,3 +158,28 @@ def test_hip_truth_is_the_outer_envelope_of_the_femur() -> None:
     assert tip is not None
     row = np.flatnonzero(truth["femur"][int(tip[1])])
     assert row[-1] == pytest.approx(tip[0], abs=1.5)
+
+
+# --- сравнение модели с правилами ---------------------------------------------
+
+
+def test_paired_auc_difference_is_zero_for_identical_scores() -> None:
+    from train.compare import _auc_diff_ci
+
+    rng = np.random.default_rng(0)
+    y = np.array([0, 1] * 30)
+    p = rng.random(60)
+    groups = np.repeat(np.arange(20), 3)
+    d, lo, hi = _auc_diff_ci(y, p, p, groups, n=200)
+    assert d == 0.0 and lo == 0.0 and hi == 0.0
+
+
+def test_paired_auc_difference_sees_a_better_model() -> None:
+    from train.compare import _auc_diff_ci
+
+    rng = np.random.default_rng(1)
+    y = np.array([0, 1] * 40)
+    good = y + rng.normal(0, 0.3, len(y))
+    noise = rng.random(len(y))
+    d, lo, hi = _auc_diff_ci(y, good, noise, np.repeat(np.arange(40), 2), n=500)
+    assert d > 0.3 and lo > 0

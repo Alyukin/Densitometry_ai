@@ -3,3 +3,4 @@ runs/
 qa/
 *.pt
 __pycache__/
+*.tgz
