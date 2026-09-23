@@ -5,7 +5,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile,
 from fastapi.responses import FileResponse
 
 from app.api.deps import DbDep, RunnerDep, SettingsDep
-from app.models import StudyStatus
+from app.models import ACTIVE_STATUSES, StudyStatus
 from app.schemas.study import (
     ProcessResponse,
     ResultRow,
@@ -22,7 +22,7 @@ from app.services import studies as svc
 from app.services.dicom import render_preview_png
 from app.services.dicom_sr import build_sr, to_bytes
 from app.services.overlay import render_overlay_png
-from app.services.upload import UploadLimitError, UploadService
+from app.services.upload import ALREADY_UPLOADED, UploadLimitError, UploadService
 
 router = APIRouter(prefix="/api/v1/studies", tags=["studies"])
 
@@ -39,7 +39,8 @@ ExportSource = Literal["auto", "reviewed"]
         "Принимает один или несколько DICOM-файлов (`.dcm` или без расширения) и/или ZIP-архивы. "
         "Файлы группируются в исследования по `StudyInstanceUID`. Файл, который не разбирается как DICOM, "
         "тоже принимается: в результатах у него будет строка с `processing_status = Failure`. В `rejected` "
-        "попадают только служебные файлы (DICOMDIR) и документы (таблицы, PDF, текст)."
+        "попадают служебные файлы (DICOMDIR), документы (таблицы, PDF, текст) и снимки, которые уже "
+        "загружены (тот же SOPInstanceUID). Новые снимки уже загруженного исследования добавляются к нему."
     ),
 )
 async def upload_studies(
@@ -54,10 +55,9 @@ async def upload_studies(
     except UploadLimitError as exc:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, str(exc)) from exc
     if not outcome.studies and outcome.rejected:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            {"message": "Ни один файл не распознан как DICOM", "rejected": outcome.rejected},
-        )
+        known = any(r["reason"].startswith(ALREADY_UPLOADED) for r in outcome.rejected)
+        message = "Новых снимков нет: эти файлы уже загружены" if known else "Ни один файл не распознан как DICOM"
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, {"message": message, "rejected": outcome.rejected})
     return UploadResponse(
         studies=[svc.to_summary(s) for s in outcome.studies],
         rejected=outcome.rejected,
@@ -92,7 +92,10 @@ def delete_study(study_id: str, db: DbDep, settings: SettingsDep) -> Response:
     response_model=ProcessResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Запуск обработки",
-    description="Ставит исследование в очередь. Повторный запуск перезаписывает предыдущий результат.",
+    description=(
+        "Ставит исследование в очередь. Повторный запуск пересчитывает автоматический вердикт; "
+        "проверка специалиста переносится на новый результат."
+    ),
 )
 def process_study(study_id: str, db: DbDep, runner: RunnerDep) -> ProcessResponse:
     study = svc.get_study_or_404(db, study_id)
@@ -208,10 +211,16 @@ def download_package(study_id: str, db: DbDep, settings: SettingsDep) -> Respons
         "поэтому всегда видно, что предложил сервис и что решил человек. Исправление "
         "проверяется по тому же закрытому списку нарушений, что и автоматический вердикт."
     ),
-    responses={404: {"description": "Изображение или результат не найдены"}},
+    responses={
+        404: {"description": "Изображение или результат не найдены"},
+        409: {"description": "Исследование в очереди или обрабатывается"},
+    },
 )
 def review_image(study_id: str, image_id: str, body: ReviewRequest, db: DbDep) -> ReviewOut:
     study = svc.get_study_or_404(db, study_id)
+    if study.status in ACTIVE_STATUSES:
+        # строки результата сейчас пересоздаются — правка ушла бы в удаляемую строку
+        raise HTTPException(status.HTTP_409_CONFLICT, "Исследование обрабатывается — повторите после завершения")
     result = next((r for r in study.results if r.image_id == image_id), None)
     if result is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Результат для этого изображения не найден")

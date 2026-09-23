@@ -164,6 +164,16 @@ def fit_rules(rows: list[dict], min_specificity: float, min_gain: float = 0.02, 
                     "enabled": rid in chosen,
                     "train_ba": round(fitted[rid]["ba"], 4),
                 }
+                # Проверку, которой требует ТЗ, отбор может не взять в вердикт — тогда
+                # она остаётся справочной, с порогом ТЗ, если он там записан. На
+                # вердикт и метрики это не влияет: у бедра quality_prob — максимум по
+                # решающим проверкам.
+                if rid not in chosen and RULES[rid].get("reference_when_off"):
+                    cfg[rid].update(
+                        enabled=True,
+                        decides=False,
+                        threshold=float(TZ_THRESHOLDS.get(rid, fitted[rid]["threshold"])),
+                    )
 
     # Справочные проверки (decides=False) в вердикт не входят, но ТЗ требует их
     # выполнять и показывать, поэтому порог для них тоже нужен: берём записанный
@@ -301,7 +311,11 @@ def main() -> None:
         c["op"] = spec["op"]
         if rid in TZ_THRESHOLDS:
             c["threshold_tz"] = TZ_THRESHOLDS[rid]
-            c["note"] = f"порог ТЗ = {TZ_THRESHOLDS[rid]}, рабочий порог подобран по разметке"
+            c["note"] = (
+                f"порог ТЗ = {TZ_THRESHOLDS[rid]}, справочно: в вердикт не входит"
+                if c.get("decides") is False
+                else f"порог ТЗ = {TZ_THRESHOLDS[rid]}, рабочий порог подобран по разметке"
+            )
 
     Path(args.out_thresholds).write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
     Path(args.out_metrics).write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
