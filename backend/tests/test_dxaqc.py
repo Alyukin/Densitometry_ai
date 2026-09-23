@@ -175,6 +175,29 @@ def test_reference_only_check_does_not_decide() -> None:
     assert v.quality_class == 0
 
 
+def test_rule_demoted_by_calibration_is_shown_but_does_not_decide() -> None:
+    """Проверку ТЗ, которую отбор не взял в вердикт, калибровка оставляет справочной."""
+    th = {"femur_roi_horizontal": {"threshold": 2.0, "soft_width": 0.5, "enabled": True, "decides": False}}
+    v = evaluate(REGION_FEMUR, {"margin_min_horizontal_cm": 1.5}, th)
+    assert v.checks[0].fired is True
+    assert v.checks[0].tz_fired is True
+    assert v.checks[0].decides is False
+    assert v.violations == []
+    assert v.quality_class == 0
+
+
+def test_shipped_thresholds_show_every_femur_tz_check() -> None:
+    """Поля 3 / 2 см и ротация в вердикт не входят, но показываются — с порогом ТЗ, где он есть."""
+    meas = {spec["feature"]: 1.0 for spec in RULES.values() if spec["region"] == REGION_FEMUR}
+    meas["lt_measured"] = 1.0
+    checks = {c.rule_id: c for c in evaluate(REGION_FEMUR, meas, load_thresholds()).checks}
+    for rid in ("femur_roi_vertical", "femur_roi_horizontal", "femur_rotation_low", "femur_rotation_high"):
+        assert rid in checks, rid
+        assert checks[rid].decides is False, rid
+    assert checks["femur_roi_vertical"].threshold == 3.0
+    assert checks["femur_roi_horizontal"].threshold == 2.0
+
+
 def test_all_tz_checks_are_implemented() -> None:
     """Каждая проверка из раздела 2.3 ТЗ должна иметь правило."""
     features = {spec["feature"] for spec in RULES.values()}

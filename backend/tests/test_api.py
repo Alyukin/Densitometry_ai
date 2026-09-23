@@ -146,6 +146,53 @@ def test_upload_duplicate_sop_rejected(client: TestClient, samples: Path) -> Non
     assert "Дубликат" in r.json()["rejected"][0]["reason"]
 
 
+def test_reupload_of_the_same_files_does_not_duplicate_the_study(client: TestClient, samples: Path) -> None:
+    files = [(samples / f"study_hip_01/IM000{i}.dcm", f"study_hip_01/IM000{i}.dcm") for i in (1, 2)]
+    sid = upload(client, *files).json()["studies"][0]["id"]
+    client.post(f"/api/v1/studies/{sid}/process")
+    wait_done(client, sid)
+
+    r = upload(client, *files)
+    assert r.status_code == 422
+    assert "уже загружены" in r.json()["detail"]["message"]
+    assert all(x["reason"].startswith("Уже загружен") for x in r.json()["detail"]["rejected"])
+    assert client.get("/api/v1/studies").json()["total"] == 1
+    csv_rows = client.get("/api/v1/batch/download?format=csv").text.strip().splitlines()[1:]
+    assert len(csv_rows) == 2  # по строке на снимок, без задвоения
+
+
+def test_study_uploaded_in_parts_stays_one_study(client: TestClient, samples: Path) -> None:
+    first = upload(client, (samples / "study_hip_01/IM0001.dcm", "study_hip_01/IM0001.dcm")).json()["studies"][0]
+    client.post(f"/api/v1/studies/{first['id']}/process")
+    wait_done(client, first["id"])
+
+    r = upload(client, (samples / "study_hip_01/IM0002.dcm", "study_hip_01/IM0002.dcm"))
+    assert r.status_code == 201, r.text
+    [study] = r.json()["studies"]
+    assert study["id"] == first["id"]
+    assert study["image_count"] == 2
+    assert study["status"] == "uploaded"  # новый снимок ещё не обработан
+    assert any("Добавлено снимков" in w for w in r.json()["warnings"])
+    assert client.get("/api/v1/studies").json()["total"] == 1
+
+    client.post(f"/api/v1/studies/{first['id']}/process")
+    assert wait_done(client, first["id"])["status"] == "completed"
+    assert len(client.get(f"/api/v1/studies/{first['id']}/result").json()["rows"]) == 2
+
+
+def test_images_are_not_added_to_a_study_being_processed(client: TestClient, samples: Path) -> None:
+    from app.db.session import session_scope
+    from app.models import Study, StudyStatus
+
+    sid = upload(client, (samples / "study_hip_01/IM0001.dcm", "IM0001.dcm")).json()["studies"][0]["id"]
+    with session_scope() as db:
+        db.get(Study, sid).status = StudyStatus.processing
+    r = upload(client, (samples / "study_hip_01/IM0002.dcm", "IM0002.dcm"))
+    assert r.status_code == 422
+    assert "обрабатывается" in r.json()["detail"]["rejected"][0]["reason"]
+    assert client.get(f"/api/v1/studies/{sid}").json()["image_count"] == 1
+
+
 def test_full_processing_flow(client: TestClient, samples: Path) -> None:
     files = [(samples / f"study_combined/IM000{i}.dcm", f"study_combined/IM000{i}.dcm") for i in (1, 2, 3)]
     sid = upload(client, *files).json()["studies"][0]["id"]

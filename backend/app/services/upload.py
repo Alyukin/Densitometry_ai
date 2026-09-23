@@ -5,6 +5,12 @@
 сохраняется как изображение с причиной (`invalid_reason`) и получает свою строку в
 выгрузке. Пропускаются без строки только служебные файлы (DICOMDIR, .DS_Store,
 __MACOSX) и документы рядом с данными (таблицы, PDF, текст) — это не снимки.
+
+Повторная загрузка не плодит дубликатов. Снимок, который уже лежит в сервисе (тот же
+SOPInstanceUID), отклоняется. Новые снимки исследования, которое уже загружено (тот же
+StudyInstanceUID), добавляются к нему, а не создают второе, и исследование снова ждёт
+обработки. Иначе в сводной выгрузке строки задваивались, а исследование, загруженное
+по частям, распадалось на несколько.
 """
 
 from __future__ import annotations
@@ -20,10 +26,11 @@ from pathlib import Path
 
 from fastapi import UploadFile
 from fastapi.concurrency import run_in_threadpool
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.models import Study, StudyImage
+from app.models import ACTIVE_STATUSES, Study, StudyImage, StudyStatus
 from app.models.study import new_id
 from app.services.dicom import DicomMeta, DicomValidationError, NotAnImageFile, read_metadata
 
@@ -34,6 +41,7 @@ ZIP_MAGIC = b"PK\x03\x04"
 SKIP_NAMES = {".ds_store", "thumbs.db", "desktop.ini"}
 # Документы, которые лежат рядом со снимками (разметка, отчёты), — не входные данные
 DOCUMENT_SUFFIXES = (".txt", ".json", ".xml", ".csv", ".xlsx", ".xls", ".pdf", ".doc", ".docx", ".md", ".html", ".log")
+ALREADY_UPLOADED = "Уже загружен"
 
 
 class UploadLimitError(Exception):
@@ -95,6 +103,7 @@ class UploadService:
         self.settings = settings
         self._total_bytes = 0
         self._created_dirs: list[Path] = []
+        self._created_files: list[Path] = []  # файлы, добавленные в уже существующие исследования
 
     async def _save_stream(self, upload: UploadFile, dest: Path) -> int:
         size = 0
@@ -164,6 +173,8 @@ class UploadService:
             self.db.rollback()
             for d in self._created_dirs:
                 shutil.rmtree(d, ignore_errors=True)
+            for f in self._created_files:
+                f.unlink(missing_ok=True)
             raise
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
@@ -187,6 +198,7 @@ class UploadService:
                 out.rejected.append({"filename": c.original_name, "reason": str(exc)})
             except DicomValidationError as exc:
                 invalid.append(_Invalid(c, str(exc)))
+        valid = self._drop_known(valid, out)
 
         groups: OrderedDict[str, list[_Valid]] = OrderedDict()
         for v in valid:
@@ -213,8 +225,12 @@ class UploadService:
             )
 
         for key, items in groups.items():
-            study = self._create_study(items, out, attached.get(key, []))
-            if study is not None:
+            existing = self._existing_study(items[0].meta.study_instance_uid)
+            if existing is not None:
+                study = self._add_to_study(existing, items, out, attached.get(key, []))
+            else:
+                study = self._create_study(items, out, attached.get(key, []))
+            if study is not None and study not in out.studies:
                 out.studies.append(study)
         for bad in standalone:
             out.studies.append(self._create_invalid_study(bad))
@@ -222,6 +238,101 @@ class UploadService:
         self.db.commit()
         for s in out.studies:
             self.db.refresh(s)
+
+    def _drop_known(self, valid: list[_Valid], out: UploadOutcome) -> list[_Valid]:
+        """Снимки, которые уже лежат в сервисе (по SOPInstanceUID), повторно не принимаются."""
+        sops = sorted({v.meta.sop_instance_uid for v in valid if v.meta.sop_instance_uid})
+        known: dict[str, str] = {}
+        for i in range(0, len(sops), 500):  # держимся ниже лимита параметров SQLite
+            rows = self.db.execute(
+                select(StudyImage.sop_instance_uid, Study.name)
+                .join(Study, Study.id == StudyImage.study_id)
+                .where(StudyImage.sop_instance_uid.in_(sops[i : i + 500]))
+            ).all()
+            known.update({sop: name for sop, name in rows})
+        kept: list[_Valid] = []
+        for v in valid:
+            study_name = known.get(v.meta.sop_instance_uid) if v.meta.sop_instance_uid else None
+            if study_name is None:
+                kept.append(v)
+            else:
+                out.rejected.append(
+                    {"filename": v.cand.original_name, "reason": f"{ALREADY_UPLOADED} (исследование «{study_name}»)"}
+                )
+        return kept
+
+    def _existing_study(self, study_uid: str | None) -> Study | None:
+        if not study_uid:
+            return None
+        return self.db.scalars(
+            select(Study).where(Study.study_instance_uid == study_uid).order_by(Study.created_at.desc()).limit(1)
+        ).first()
+
+    @staticmethod
+    def _unique(items: list[_Valid], out: UploadOutcome) -> list[_Valid]:
+        """Дубликаты SOPInstanceUID внутри одной загрузки."""
+        seen: set[str] = set()
+        unique: list[_Valid] = []
+        for v in items:
+            uid = v.meta.sop_instance_uid
+            if uid and uid in seen:
+                out.rejected.append({"filename": v.cand.original_name, "reason": "Дубликат SOPInstanceUID"})
+                continue
+            if uid:
+                seen.add(uid)
+            unique.append(v)
+        return unique
+
+    def _image(self, v: _Valid, rel_dir: Path) -> StudyImage:
+        image_id = new_id()
+        rel_path = rel_dir / f"{image_id}.dcm"
+        dest = self.settings.data_dir / rel_path
+        shutil.move(str(v.cand.path), dest)
+        self._created_files.append(dest)
+        m = v.meta
+        return StudyImage(
+            id=image_id,
+            original_filename=v.cand.original_name[:1024],
+            stored_path=str(rel_path),
+            size_bytes=v.cand.size,
+            sop_instance_uid=m.sop_instance_uid,
+            series_instance_uid=m.series_instance_uid,
+            modality=m.modality,
+            body_part_examined=m.body_part_examined,
+            rows=m.rows,
+            columns=m.columns,
+            has_pixel_data=m.has_pixel_data,
+        )
+
+    def _add_to_study(
+        self, study: Study, items: list[_Valid], out: UploadOutcome, invalid: list[_Invalid]
+    ) -> Study | None:
+        """Новые снимки уже загруженного исследования — к нему же, а не вторым исследованием."""
+        if study.status in ACTIVE_STATUSES:
+            reason = f"Исследование «{study.name}» сейчас обрабатывается — загрузите файл после завершения"
+            out.rejected.extend({"filename": x.cand.original_name, "reason": reason} for x in [*items, *invalid])
+            return None
+        unique = self._unique(items, out)
+        rel_dir = Path(study.storage_dir)
+        (self.settings.data_dir / rel_dir).mkdir(parents=True, exist_ok=True)
+        for v in unique:
+            study.images.append(self._image(v, rel_dir))
+        for bad in invalid:
+            study.images.append(self._invalid_image(bad, rel_dir))
+
+        added = len(unique) + len(invalid)
+        warnings = [f"Добавлено снимков к уже загруженному исследованию: {added}. Его нужно обработать заново."]
+        if len(study.images) > self.settings.max_images_per_study:
+            warnings.append(
+                f"В исследовании {len(study.images)} изображений — больше ожидаемых "
+                f"{self.settings.max_images_per_study}. Все будут обработаны."
+            )
+        study.warnings = list(dict.fromkeys([*(study.warnings or []), *warnings]))
+        # старые результаты не удаляются: при обработке проверка специалиста перенесётся
+        study.status = StudyStatus.uploaded
+        study.progress = 0
+        out.warnings.extend(f"{study.name}: {w}" for w in warnings)
+        return study
 
     def _new_study_dir(self) -> tuple[str, Path, Path]:
         study_id = new_id()
@@ -234,7 +345,9 @@ class UploadService:
     def _invalid_image(self, bad: _Invalid, rel_dir: Path) -> StudyImage:
         image_id = new_id()
         rel_path = rel_dir / f"{image_id}.bin"
-        shutil.move(str(bad.cand.path), self.settings.data_dir / rel_path)
+        dest = self.settings.data_dir / rel_path
+        shutil.move(str(bad.cand.path), dest)
+        self._created_files.append(dest)
         return StudyImage(
             id=image_id,
             original_filename=bad.cand.original_name[:1024],
@@ -263,16 +376,7 @@ class UploadService:
         self, items: list[_Valid], out: UploadOutcome, invalid: list[_Invalid] | None = None
     ) -> Study | None:
         invalid = invalid or []
-        seen: set[str] = set()
-        unique: list[_Valid] = []
-        for v in items:
-            uid = v.meta.sop_instance_uid
-            if uid and uid in seen:
-                out.rejected.append({"filename": v.cand.original_name, "reason": "Дубликат SOPInstanceUID"})
-                continue
-            if uid:
-                seen.add(uid)
-            unique.append(v)
+        unique = self._unique(items, out)
         if not unique:
             out.studies.extend(self._create_invalid_study(bad) for bad in invalid)
             return None
@@ -313,25 +417,7 @@ class UploadService:
         self.db.add(study)
 
         for v in unique:
-            image_id = new_id()
-            rel_path = rel_dir / f"{image_id}.dcm"
-            shutil.move(str(v.cand.path), self.settings.data_dir / rel_path)
-            m = v.meta
-            study.images.append(
-                StudyImage(
-                    id=image_id,
-                    original_filename=v.cand.original_name[:1024],
-                    stored_path=str(rel_path),
-                    size_bytes=v.cand.size,
-                    sop_instance_uid=m.sop_instance_uid,
-                    series_instance_uid=m.series_instance_uid,
-                    modality=m.modality,
-                    body_part_examined=m.body_part_examined,
-                    rows=m.rows,
-                    columns=m.columns,
-                    has_pixel_data=m.has_pixel_data,
-                )
-            )
+            study.images.append(self._image(v, rel_dir))
         for bad in invalid:
             study.images.append(self._invalid_image(bad, rel_dir))
         out.warnings.extend(f"{name}: {w}" for w in warnings)
