@@ -16,6 +16,8 @@ import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
+from app.models import ImageResult
+from app.services import review
 from tests.conftest import upload, wait_done
 
 COMPREHENSIVE_SR = "1.2.840.10008.5.1.4.1.1.88.33"
@@ -240,6 +242,119 @@ def test_review_of_unknown_image_is_404(rb_client: TestClient, processed) -> Non
     sid, _ = processed
     r = rb_client.post(f"/api/v1/studies/{sid}/images/deadbeef/review", json={"action": "confirm"})
     assert r.status_code == 404
+
+
+# --- проверка специалистом переживает повторную обработку ------------------------
+
+
+def _reprocess(client: TestClient, sid: str) -> list[dict]:
+    assert client.post(f"/api/v1/studies/{sid}/process").status_code == 202
+    assert wait_done(client, sid)["status"] == "completed"
+    return client.get(f"/api/v1/studies/{sid}/result").json()["rows"]
+
+
+def test_correction_survives_reprocessing(rb_client: TestClient, processed) -> None:
+    sid, rows = processed
+    spine = next(r for r in rows if "позвоночника" in (r["anatomical_region"] or ""))
+    rb_client.post(
+        f"/api/v1/studies/{sid}/images/{spine['image_id']}/review",
+        json={
+            "action": "correct",
+            "violation_type": ["Не выравнена ось позвоночника"],
+            "reviewed_by": "Иванов И.И.",
+            "comment": "сколиоз",
+        },
+    )
+    before = rb_client.get(f"/api/v1/studies/{sid}/result").json()["rows"]
+    after = _reprocess(rb_client, sid)
+    keep = ("review_status", "reviewed_quality_class", "reviewed_violation_type", "reviewed_by", "review_comment")
+    old = next(r for r in before if r["image_id"] == spine["image_id"])
+    new = next(r for r in after if r["image_id"] == spine["image_id"])
+    assert {k: new[k] for k in keep} == {k: old[k] for k in keep}
+    assert new["reviewed_at"] == old["reviewed_at"]
+    # и в выгрузке по решению врача оно на месте
+    csv = rb_client.get(f"/api/v1/studies/{sid}/download?format=csv&source=reviewed").text
+    assert "Не выравнена ось позвоночника" in csv
+
+
+def test_review_that_cannot_be_carried_over_lands_in_warnings(
+    rb_client: TestClient, processed, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.processing.base import ProcessingError
+    from app.processing.registry import get_processor
+
+    sid, rows = processed
+    rb_client.post(
+        f"/api/v1/studies/{sid}/images/{rows[0]['image_id']}/review",
+        json={"action": "confirm", "reviewed_by": "Петров П.П."},
+    )
+
+    def broken(_image):  # noqa: ANN001, ANN202
+        raise ProcessingError("сбой")
+
+    monkeypatch.setattr(get_processor(), "predict", broken)
+    rb_client.post(f"/api/v1/studies/{sid}/process")
+    wait_done(rb_client, sid)
+    warnings = rb_client.get(f"/api/v1/studies/{sid}").json()["warnings"]
+    assert any("не перенесена" in w and "Петров П.П." in w for w in warnings)
+
+
+def test_review_is_refused_while_the_study_is_queued(rb_client: TestClient, processed) -> None:
+    from app.db.session import session_scope
+    from app.models import Study, StudyStatus
+
+    sid, rows = processed
+    with session_scope() as db:
+        db.get(Study, sid).status = StudyStatus.queued
+    r = rb_client.post(f"/api/v1/studies/{sid}/images/{rows[0]['image_id']}/review", json={"action": "confirm"})
+    assert r.status_code == 409
+
+
+def _result(**kw) -> ImageResult:  # noqa: ANN003
+    base = {
+        "processing_status": "success",
+        "anatomical_region": "Проксимальный отдел бедра",
+        "quality_class": "1",
+        "violation_type": "Некорректная укладка",
+    }
+    return ImageResult(**{**base, **kw})
+
+
+def test_confirmed_review_becomes_correction_when_the_verdict_changes() -> None:
+    old = _result()
+    review.apply_review(old, "confirm", reviewer="Иванов И.И.")
+    saved = review.snapshot(old)
+
+    same = _result()
+    assert review.restore(saved, same) is None
+    assert same.review_status == "confirmed"
+
+    changed = _result(quality_class="0", violation_type="")
+    assert review.restore(saved, changed) is None
+    # врач решил «укладка»; сервис теперь говорит «годно» — это расхождение, решение врача остаётся
+    assert changed.review_status == "corrected"
+    assert changed.final_quality_class == "1"
+    assert changed.final_violation_type == "Некорректная укладка"
+
+
+def test_correction_matching_the_new_verdict_becomes_confirmation() -> None:
+    old = _result(quality_class="0", violation_type="")
+    review.apply_review(old, "correct", ["Некорректная укладка", "Некорректная область интереса"])
+    fixed = _result(violation_type="Некорректная область интереса;Некорректная укладка")
+    assert review.restore(review.snapshot(old), fixed) is None
+    assert fixed.review_status == "confirmed"
+
+
+def test_review_is_not_carried_to_another_region_or_a_failed_image() -> None:
+    old = _result()
+    review.apply_review(old, "correct", ["Некорректная область интереса"])
+    saved = review.snapshot(old)
+    spine = _result(anatomical_region="Поясничный отдел позвоночника")
+    assert "область" in review.restore(saved, spine)
+    assert not spine.review_status
+    failed = _result(processing_status="error", anatomical_region=None, quality_class=None)
+    assert review.restore(saved, failed) == "снимок не обработан"
+    assert review.snapshot(_result()) is None  # непроверенную строку переносить нечего
 
 
 # --- выгрузка: автоматический вердикт и решение врача --------------------------

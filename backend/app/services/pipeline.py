@@ -6,6 +6,11 @@
 * DICOM открылся, но это не снимок позвоночника или бедра — `Success` без области и
   класса, с причиной в `details["non_standard"]`;
 * остальное уходит в процессор.
+
+Повторная обработка пересоздаёт строки результата, но решение специалиста переносится
+на новые строки того же снимка (`app.services.review.restore`). Если перенести нельзя —
+снимок теперь не обработан или область другая, — решение врача записывается в
+предупреждения исследования, чтобы оно не пропало молча.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from app.models.study import utcnow
 from app.processing import intake
 from app.processing.base import ImageInput, ProcessingError
 from app.processing.registry import get_processor
+from app.services import review
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +69,11 @@ def process_study(study_id: str) -> None:
         study.processor_name = processor.name
         study.processor_version = processor.version
         study.is_mock = processor.is_mock
+        saved_reviews = {
+            r.image_id: saved
+            for r in db.scalars(select(ImageResult).where(ImageResult.study_id == study_id))
+            if (saved := review.snapshot(r)) is not None
+        }
         db.execute(delete(ImageResult).where(ImageResult.study_id == study_id))
         images = db.scalars(
             select(StudyImage).where(StudyImage.study_id == study_id).order_by(StudyImage.original_filename)
@@ -94,6 +105,7 @@ def process_study(study_id: str) -> None:
     logger.info("Processing study %s (%d images) with %s", study_id, len(inputs), processor.name)
     started = time.perf_counter()
     ok_count = 0
+    lost_reviews: list[str] = []
 
     # 2. Process images one by one, persisting progress
     for idx, inp in enumerate(inputs, start=1):
@@ -142,6 +154,13 @@ def process_study(study_id: str) -> None:
                 row.confidence = pred.confidence
                 row.details = pred.details
 
+        saved = saved_reviews.get(inp.image_id)
+        if saved is not None and (lost := review.restore(saved, row)):
+            lost_reviews.append(
+                f"{inp.original_filename}: проверка специалиста не перенесена после повторной обработки "
+                f"({lost}). Решение было: {saved.describe()}"
+            )
+
         with session_scope() as db:
             study = db.get(Study, study_id)
             if study is None:
@@ -158,6 +177,8 @@ def process_study(study_id: str) -> None:
             return
         study.processing_time_sec = total
         study.finished_at = utcnow()
+        if lost_reviews:
+            study.warnings = list(dict.fromkeys([*(study.warnings or []), *lost_reviews]))
         study.progress = 100
         if ok_count:
             study.status = StudyStatus.completed

@@ -212,7 +212,7 @@ export function UploadPanel({ onUploaded }: Props) {
         <div className="report">
           {report && (
             <div className="report__ok">
-              Создано исследований: <b>{report.studies.length}</b>
+              Исследований: <b>{report.studies.length}</b>
               {report.studies.length > 0 && (
                 <> ({report.studies.reduce((a, s) => a + s.image_count, 0)} изобр.)</>
               )}

@@ -214,7 +214,11 @@ RULES: dict[str, dict] = {
         "source": "разметка",
     },
     # --- бедро: «отсутствие ротации» (рис. 5) -------------------------------
+    # Детектор малого вертела разделяет классы на уровне BA 0.59, отбор ротацию в
+    # вердикт не берёт (questions.md, Э5), но ТЗ требует её проверять — поэтому
+    # reference_when_off: не взятое в вердикт правило показывается справочно.
     "femur_rotation_low": {
+        "reference_when_off": True,
         "region": REGION_FEMUR,
         "violation": VIOL_POSITION,
         "feature": "lt_prominence_rel",
@@ -226,6 +230,7 @@ RULES: dict[str, dict] = {
         "source": "разметка",
     },
     "femur_rotation_high": {
+        "reference_when_off": True,
         "region": REGION_FEMUR,
         "violation": VIOL_POSITION,
         "feature": "lt_prominence_rel",
@@ -247,7 +252,12 @@ RULES: dict[str, dict] = {
         "source": "разметка",
     },
     # --- бедро: «корректность области интереса» (рис. 6) --------------------
+    # Буквальное правило ТЗ «3 см / 2 см» отбор в вердикт не берёт: рамки ROI сканера
+    # в DICOM нет, и оно бракует 73% снимков против 6 у эксперта (questions.md, З1).
+    # Решает высота поля (femur_roi_field), а буквальное правило показывается справочно
+    # с порогом из ТЗ.
     "femur_roi_vertical": {
+        "reference_when_off": True,
         "region": REGION_FEMUR,
         "violation": VIOL_FEMUR_ROI,
         "feature": "margin_min_vertical_cm",
@@ -258,6 +268,7 @@ RULES: dict[str, dict] = {
         "source": "ТЗ",
     },
     "femur_roi_horizontal": {
+        "reference_when_off": True,
         "region": REGION_FEMUR,
         "violation": VIOL_FEMUR_ROI,
         "feature": "margin_min_horizontal_cm",
@@ -400,7 +411,8 @@ def evaluate(region: str, measurements: dict, thresholds: dict | None = None) ->
                 measured=f"{spec['title']}: {_fmt(value, spec['unit'])}",
                 criterion=f"{spec['criterion']}; норма {norm} {_fmt(thr, spec['unit'])}",
                 source=spec["source"],
-                decides=spec.get("decides", True),
+                # калибровка может перевести правило в справочные (reference_when_off)
+                decides=spec.get("decides", True) and cfg.get("decides", True),
                 tz_threshold=tz,
                 tz_fired=tz_fired,
                 note=cfg.get("note", ""),
