@@ -49,7 +49,7 @@ from torch.utils.data import DataLoader
 from dxa.labels import REGION_FEMUR, REGION_SPINE
 from train import metrics as M
 from train.dataset import DxaDataset, read_dataset
-from train.model import XRV_BACKBONES, DxaQualityNet, input_spec, masked_bce
+from train.model import XRV_BACKBONES, DxaQualityNet, check_finite, input_spec, masked_bce, setup_amp
 from train.tasks import TASK_INDEX, TASKS
 
 logger = logging.getLogger("train")
@@ -109,6 +109,7 @@ def run_epoch(  # noqa: ANN201
                 logits = model(x)
             logits = logits.float()
             loss = masked_bce(logits, t, m, pw)
+            check_finite(loss)
             if train:
                 optimizer.zero_grad(set_to_none=True)
                 if scaler is not None and scaler.is_enabled():
@@ -359,9 +360,16 @@ def main() -> None:
     data = Path(args.data)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    device = torch.device(args.device)
+    kernels = setup_amp(device, args.amp)
+    logger.info("вычисления: %s", kernels)
     # Хеш таблицы датасета: по нему через полгода видно, на тех ли данных и фолдах
     # получена метрика. Веса и данные в git не кладутся, поэтому это единственная связь.
-    config = {**vars(args), "dataset_sha256": hashlib.sha256((data / "dataset.csv").read_bytes()).hexdigest()}
+    config = {
+        **vars(args),
+        "dataset_sha256": hashlib.sha256((data / "dataset.csv").read_bytes()).hexdigest(),
+        "compute": kernels,  # свойство видеокарты, а не параметр протокола: в RESULT_KEYS не входит
+    }
     if args.resume and (out / "config.json").exists():
         prev = json.loads((out / "config.json").read_text(encoding="utf-8"))
         diff = {
@@ -381,7 +389,6 @@ def main() -> None:
         sum(s.region == REGION_FEMUR for s in samples),
         len({s.study_dir for s in samples}),
     )
-    device = torch.device(args.device)
     es = args.early_stopping == "inner"
     refit = es and args.refit
     if args.refit and not es:

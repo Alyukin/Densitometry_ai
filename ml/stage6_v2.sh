@@ -152,7 +152,8 @@ say "4/6 конфигурация 2: xrv-densenet121 (TorchXRayVision)"
 python3 -m train.train "${COMMON[@]}" --backbone xrv-densenet121 --out "$RUNS/xrv-densenet121"
 
 say "5/6 Arak: подготовка кадров и предобучение бэкбона"
-if [ ! -f "$ARAK_DATA/arak.csv" ]; then
+# arak.csv пишется в конце подготовки; файл с одним заголовком — пустой набор, готовим заново
+if [ ! -f "$ARAK_DATA/arak.csv" ] || [ "$(wc -l < "$ARAK_DATA/arak.csv")" -le 1 ]; then
   python3 -m dxa.arak --data-root "$DATA_ROOT" --out "$ARAK_DATA" ${ARAK_LIMIT:+--limit "$ARAK_LIMIT"}
 else
   echo "уже подготовлено: $ARAK_DATA"
@@ -186,6 +187,9 @@ env = {
     "amp": sys.argv[2] == "1",
     "python": platform.python_version(),
 }
+if gpu:
+    from train.model import fp16_cudnn_ok
+    env["cudnn_fp16_ok"] = fp16_cudnn_ok(torch.device("cuda"))
 try:
     env["git_commit"] = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
 except OSError:

@@ -113,6 +113,50 @@ class DxaQualityNet(nn.Module):
         return self.head(self.dropout(self.backbone(x)))
 
 
+def fp16_cudnn_ok(device: torch.device) -> bool:
+    """Даёт ли cuDNN конечный результат в fp16 на этой видеокарте.
+
+    На GTX 16xx (проверено на 1660 Ti, cuDNN 9.10) свёртка 3×3 в fp16 через cuDNN
+    возвращает NaN на всех выходах, и обучение с AMP молча идёт по NaN. Проверка —
+    несколько свёрток на случайном входе; глобальный генератор случайных чисел не трогается.
+    """
+    if device.type != "cuda" or not torch.backends.cudnn.enabled:
+        return True
+    gen = torch.Generator(device=device).manual_seed(0)
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16):
+        for cin, cout, k in ((64, 64, 3), (128, 32, 3), (3, 64, 7), (64, 128, 1)):
+            x = torch.randn(16, cin, 96, 80, device=device, generator=gen)
+            w = torch.randn(cout, cin, k, k, device=device, generator=gen) * (2.0 / (cin * k * k)) ** 0.5
+            if not torch.isfinite(nn.functional.conv2d(x, w, padding=k // 2)).all():
+                return False
+    return True
+
+
+def setup_amp(device: torch.device, amp: bool) -> str:
+    """Готовит смешанную точность и возвращает, какими ядрами считаются свёртки.
+
+    Точность при этом не меняется — fp16 под autocast, как объявлено в протоколе (К2).
+    Если cuDNN в fp16 даёт NaN, он отключается и свёртки идут встроенными ядрами
+    PyTorch: медленнее, но результат конечный. Решение зависит только от видеокарты и
+    одно на все конфигурации.
+    """
+    if not amp or device.type != "cuda":
+        return "fp32" if not amp else f"autocast на {device.type}"
+    if fp16_cudnn_ok(device):
+        return "fp16, свёртки cuDNN"
+    torch.backends.cudnn.enabled = False
+    return "fp16, свёртки без cuDNN: cuDNN в fp16 на этой видеокарте даёт NaN"
+
+
+def check_finite(loss: torch.Tensor) -> None:
+    """Loss NaN или inf — дальше учиться бессмысленно: веса и выбор эпохи будут мусором."""
+    if not torch.isfinite(loss):
+        raise FloatingPointError(
+            f"loss = {float(loss.detach())}: не число уже в прямом проходе. Обучение остановлено. "
+            "Если включён --amp, проверьте fp16 на этой видеокарте (train.model.setup_amp)."
+        )
+
+
 def masked_bce(
     logits: torch.Tensor,
     targets: torch.Tensor,

@@ -35,7 +35,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from dxa.labels import REGION_FEMUR, REGION_SPINE
 from train.dataset import to_tensor
-from train.model import XRV_BACKBONES, build_backbone, input_spec
+from train.model import XRV_BACKBONES, build_backbone, check_finite, input_spec, setup_amp
 
 logger = logging.getLogger("pretrain")
 
@@ -192,9 +192,15 @@ def main() -> None:
     rows = read_rows(data / "arak.csv")
     train_rows = [r for r in rows if int(r["fold"]) != args.val_fold]
     val_rows = [r for r in rows if int(r["fold"]) == args.val_fold]
+    if not train_rows or not val_rows:
+        raise SystemExit(
+            f"Arak: нужны снимки и для обучения, и для контроля, а их {len(train_rows)} и {len(val_rows)}. "
+            f"Проверьте подготовку: {data / 'report.json'}"
+        )
     stats = fit_stats(train_rows)
     size, norm = (args.height, args.width), input_spec(args.backbone)
     device = torch.device(args.device)
+    logger.info("вычисления: %s", setup_amp(device, args.amp))
 
     train_dl = DataLoader(
         ArakDataset(train_rows, data, stats, size, norm, train=True),
@@ -224,6 +230,7 @@ def main() -> None:
             with _autocast(device, args.amp):
                 pred = model(x)
             loss = loss_fn(pred.float(), y, m)
+            check_finite(loss)
             opt.zero_grad()
             if scaler.is_enabled():
                 scaler.scale(loss).backward()

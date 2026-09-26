@@ -84,3 +84,41 @@ def test_early_stopping_state_roundtrip() -> None:
     assert (again.best, again.best_epoch, again.bad) == (1.0, 0, 1)
     again.step(1.2, 2)
     assert again.stop
+
+
+# --- NaN в обучении -------------------------------------------------------------
+# На GTX 1660 Ti fp16 через cuDNN давал NaN на всех выходах, и первый прогон v2 молча
+# учился по NaN до падения на пустом best_state. Теперь это ловится сразу.
+
+
+def test_nan_loss_stops_training_at_once() -> None:
+    import torch
+    from torch import nn
+
+    from train.train import run_epoch
+
+    class Broken(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.w = nn.Parameter(torch.zeros(1))
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return torch.full((len(x), 7), float("nan")) + self.w
+
+    batch = (torch.zeros(2, 1, 4, 4), torch.zeros(2, 7), torch.ones(2, 7), torch.tensor([0, 1]))
+    model = Broken()
+    opt = torch.optim.SGD(model.parameters(), lr=0.1)
+    with pytest.raises(FloatingPointError, match="не число"):
+        run_epoch(model, [batch], torch.device("cpu"), torch.ones(7), opt)
+
+
+def test_amp_setup_leaves_fp32_and_cpu_alone() -> None:
+    import torch
+
+    from train.model import fp16_cudnn_ok, setup_amp
+
+    cudnn = torch.backends.cudnn.enabled
+    assert setup_amp(torch.device("cpu"), amp=False) == "fp32"
+    assert setup_amp(torch.device("cpu"), amp=True).startswith("autocast")
+    assert fp16_cudnn_ok(torch.device("cpu"))
+    assert torch.backends.cudnn.enabled == cudnn

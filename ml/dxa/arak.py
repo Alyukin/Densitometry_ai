@@ -192,12 +192,14 @@ def build(arak_root: Path, out: Path, n_folds: int = 5, seed: int = 0, limit: in
     table = read_table(arak_root / TABLE_NAME)
     (out / "images").mkdir(parents=True, exist_ok=True)
     files = sorted((arak_root / IMAGES_DIR).glob("*.png"))
-    if limit:
-        files = files[:limit]
 
     stats: Counter = Counter()
     rows: list[dict] = []
     for f in files:
+        # limit считает годные снимки, а не файлы: первые по имени файлы — сплошь без
+        # номера пациента, и «первые N файлов» давали пустой набор
+        if limit and len(rows) >= limit:
+            break
         stats["файлов"] += 1
         pid, idx = parse_name(f.stem)
         if pid is None:
@@ -252,7 +254,7 @@ def main() -> None:
     ap.add_argument("--out", default="data/arak")
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--limit", type=int, help="взять первые N файлов — для быстрой проверки")
+    ap.add_argument("--limit", type=int, help="взять первые N годных снимков — для быстрой проверки")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     root = Path(args.data_root)
