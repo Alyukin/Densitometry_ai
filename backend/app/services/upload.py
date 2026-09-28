@@ -15,6 +15,7 @@ StudyInstanceUID), добавляются к нему, а не создают в
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import posixpath
 import shutil
@@ -65,6 +66,7 @@ class _Valid:
 class _Invalid:
     cand: _Candidate
     reason: str
+    sha256: str = ""
 
 
 @dataclass
@@ -95,6 +97,14 @@ def _is_junk(name: str) -> bool:
 
 def _is_document(name: str) -> bool:
     return posixpath.basename(name).lower().endswith(DOCUMENT_SUFFIXES)
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        while chunk := fh.read(CHUNK):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 class UploadService:
@@ -159,10 +169,12 @@ class UploadService:
                 size = await self._save_stream(up, tmp)
                 if _is_junk(name):
                     continue
-                if size > 0 and _is_zip(tmp, name):
-                    zips.append((tmp, name))
-                elif _is_document(name):
+                # Документ проверяется раньше архива: .xlsx и .docx — это ZIP внутри, и таблица
+                # разметки рядом со снимками иначе распаковалась бы в строки Failure
+                if _is_document(name):
                     out.rejected.append({"filename": name, "reason": "Документ, а не снимок: пропущен"})
+                elif size > 0 and _is_zip(tmp, name):
+                    zips.append((tmp, name))
                 else:
                     candidates.append(_Candidate(name, tmp, size))
 
@@ -199,6 +211,7 @@ class UploadService:
             except DicomValidationError as exc:
                 invalid.append(_Invalid(c, str(exc)))
         valid = self._drop_known(valid, out)
+        invalid = self._drop_known_invalid(invalid, out)
 
         groups: OrderedDict[str, list[_Valid]] = OrderedDict()
         for v in valid:
@@ -258,6 +271,35 @@ class UploadService:
             else:
                 out.rejected.append(
                     {"filename": v.cand.original_name, "reason": f"{ALREADY_UPLOADED} (исследование «{study_name}»)"}
+                )
+        return kept
+
+    def _drop_known_invalid(self, invalid: list[_Invalid], out: UploadOutcome) -> list[_Invalid]:
+        """Тот же нераспознанный файл повторно не принимается.
+
+        UID у него нет, поэтому он узнаётся по содержимому и имени вместе. Только по
+        содержимому нельзя: два разных пустых файла одинаковы по байтам, а строка Failure
+        нужна каждому.
+        """
+        for bad in invalid:
+            bad.sha256 = _sha256(bad.cand.path)
+        hashes = sorted({b.sha256 for b in invalid})
+        known: dict[tuple[str, str], str] = {}
+        for i in range(0, len(hashes), 500):
+            rows = self.db.execute(
+                select(StudyImage.content_sha256, StudyImage.original_filename, Study.name)
+                .join(Study, Study.id == StudyImage.study_id)
+                .where(StudyImage.content_sha256.in_(hashes[i : i + 500]))
+            ).all()
+            known.update({(sha, name): study for sha, name, study in rows})
+        kept: list[_Invalid] = []
+        for bad in invalid:
+            study_name = known.get((bad.sha256, bad.cand.original_name[:1024]))
+            if study_name is None:
+                kept.append(bad)
+            else:
+                out.rejected.append(
+                    {"filename": bad.cand.original_name, "reason": f"{ALREADY_UPLOADED} (исследование «{study_name}»)"}
                 )
         return kept
 
@@ -321,7 +363,11 @@ class UploadService:
             study.images.append(self._invalid_image(bad, rel_dir))
 
         added = len(unique) + len(invalid)
-        warnings = [f"Добавлено снимков к уже загруженному исследованию: {added}. Его нужно обработать заново."]
+        # Предупреждать есть о чём, только если исследование уже обрабатывалось: при
+        # загрузке большой папки частями снимки просто докладываются в новое исследование.
+        warnings = []
+        if study.results or study.status != StudyStatus.uploaded:
+            warnings.append(f"Добавлено снимков к уже загруженному исследованию: {added}. Его нужно обработать заново.")
         if len(study.images) > self.settings.max_images_per_study:
             warnings.append(
                 f"В исследовании {len(study.images)} изображений — больше ожидаемых "
@@ -355,6 +401,7 @@ class UploadService:
             size_bytes=bad.cand.size,
             has_pixel_data=False,
             invalid_reason=bad.reason[:255],
+            content_sha256=bad.sha256 or None,
         )
 
     def _create_invalid_study(self, bad: _Invalid) -> Study:

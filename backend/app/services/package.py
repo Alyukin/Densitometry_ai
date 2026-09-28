@@ -11,11 +11,9 @@ import logging
 import zipfile
 from pathlib import Path
 
-from pydicom.uid import generate_uid
-
 from app.models import Study
 from app.services import export
-from app.services.dicom_sr import build_secondary_capture, build_sr, to_bytes
+from app.services.dicom_sr import build_secondary_capture, build_sr, content_time, content_version, to_bytes, uid
 from app.services.overlay import render_overlay_png
 
 logger = logging.getLogger(__name__)
@@ -43,7 +41,9 @@ def build_zip(study: Study, data_dir: Path) -> bytes:
         z.writestr("results.xlsx", export.to_xlsx(results, study.is_mock))
         z.writestr("sr.dcm", to_bytes(build_sr(study, results, data_dir)))
 
-        series_uid = generate_uid()
+        # UID из содержимого, как у SR: повторная выгрузка не плодит в PACS копий
+        version, when = content_version(study, results), content_time(study, results)
+        series_uid = uid("sc-series", study.id)
         n = 0
         for r in results:
             overlay = (r.details or {}).get("overlay")
@@ -64,5 +64,8 @@ def build_zip(study: Study, data_dir: Path) -> bytes:
             stem = f"{n:02d}_{Path(image.original_filename).stem or 'image'}"
             label = f"{r.anatomical_region or 'DXA'}: {r.violation_type or 'нарушений не найдено'}"
             z.writestr(f"overlay/{stem}.png", png)
-            z.writestr(f"overlay/{stem}.dcm", to_bytes(build_secondary_capture(png, source, label, n, series_uid)))
+            sc = build_secondary_capture(
+                png, source, label, n, series_uid, uid("sc", version, image.id), when, uid("study", study.id)
+            )
+            z.writestr(f"overlay/{stem}.dcm", to_bytes(sc))
     return buf.getvalue()

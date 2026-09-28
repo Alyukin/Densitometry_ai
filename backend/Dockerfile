@@ -13,6 +13,16 @@ RUN npm init -y >/dev/null \
           node_modules/swagger-ui-dist/favicon-32x32.png \
           node_modules/redoc/bundles/redoc.standalone.js /out/
 
+# ---------- Второе мнение: замороженный DenseNet121 (TorchXRayVision) -> ONNX ----------
+# torch нужен только здесь, в образ сервиса попадает один файл ONNX (~27 МБ), а выполняет
+# его onnxruntime. Веса публичные (Apache-2.0) и скачиваются с GitHub при сборке.
+FROM ${PYTHON_IMAGE} AS second-opinion
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+RUN pip install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install torchxrayvision==1.5.4 onnx==1.23.0
+COPY app/scripts/export_second_opinion.py /tmp/export_second_opinion.py
+RUN python /tmp/export_second_opinion.py --out /out/xrv_densenet121.onnx
+
 # ---------- Base: runtime dependencies ----------
 FROM ${PYTHON_IMAGE} AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -39,6 +49,7 @@ RUN groupadd --system --gid 10001 app \
     && chown app:app /data
 COPY app ./app
 COPY --from=docs-assets /out ./app/static/docs
+COPY --from=second-opinion /out/xrv_densenet121.onnx ./app/processing/second_opinion_model/
 # Код принадлежит root и доступен всем только на чтение — независимо от прав файлов на хосте
 # (иначе при umask 077 пользователь app не сможет импортировать модули).
 RUN chmod -R a+rX,go-w /app

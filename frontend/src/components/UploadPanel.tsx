@@ -85,7 +85,7 @@ export function UploadPanel({ onUploaded }: Props) {
     setReport(null);
     setRejectedFromError([]);
     try {
-      const res = await api.upload(items, setProgress);
+      const res = await api.uploadAll(items, setProgress);
       setReport(res);
       setItems([]);
       const n = res.studies.length;

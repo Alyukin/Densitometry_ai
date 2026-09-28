@@ -282,14 +282,43 @@ def _verifying_observers(results: list[ImageResult]) -> Sequence:
     return Sequence(items)
 
 
+def uid(*parts: object) -> str:
+    """UID из содержимого: те же части — тот же UID (корень pydicom, хэш частей)."""
+    return generate_uid(entropy_srcs=["densitometry-ai", *(str(p) for p in parts)])
+
+
+def content_version(study: Study, results: list[ImageResult]) -> str:
+    """Всё, от чего зависит содержимое отчёта: обработка и решения врача.
+
+    Тот же отпечаток даёт тот же SOPInstanceUID, поэтому повторное скачивание не плодит
+    в PACS копий. Повторная обработка или новое решение врача — новый экземпляр в той же
+    серии.
+    """
+    parts = [study.id, study.finished_at, study.processor_name, study.processor_version]
+    for r in sorted(results, key=lambda r: r.id or 0):
+        parts += [r.id, r.review_status, r.reviewed_quality_class, r.reviewed_violation_type]
+        parts += [r.reviewed_by, r.review_comment, r.reviewed_at]
+    return "|".join(str(p) for p in parts)
+
+
+def content_time(study: Study, results: list[ImageResult]) -> datetime:
+    """Когда содержимое отчёта стало таким: конец обработки или последнее решение врача."""
+
+    def utc(t: datetime) -> datetime:
+        return t.replace(tzinfo=UTC) if t.tzinfo is None else t.astimezone(UTC)
+
+    times = [utc(t) for t in (study.finished_at, *(r.reviewed_at for r in results)) if t]
+    return max(times) if times else datetime.now(UTC)
+
+
 def build_sr(study: Study, results: list[ImageResult], data_dir: Path) -> FileDataset:
     """Одно заключение на исследование, со ссылками на все его изображения."""
-    now = datetime.now(UTC)
+    now = content_time(study, results)
     by_image = {i.id: i for i in study.images}
 
     meta = FileMetaDataset()
     meta.MediaStorageSOPClassUID = COMPREHENSIVE_SR
-    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.MediaStorageSOPInstanceUID = uid("sr", content_version(study, results))
     meta.TransferSyntaxUID = ExplicitVRLittleEndian
     sr = FileDataset("sr.dcm", {}, file_meta=meta, preamble=b"\0" * 128)
 
@@ -304,11 +333,11 @@ def build_sr(study: Study, results: list[ImageResult], data_dir: Path) -> FileDa
                 continue
     _passthrough(sr, first_source)
     if not getattr(sr, "StudyInstanceUID", ""):
-        sr.StudyInstanceUID = study.study_instance_uid or generate_uid()
+        sr.StudyInstanceUID = study.study_instance_uid or uid("study", study.id)
 
     sr.SOPClassUID = COMPREHENSIVE_SR
     sr.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
-    sr.SeriesInstanceUID = generate_uid()
+    sr.SeriesInstanceUID = uid("sr-series", study.id)
     sr.SeriesNumber = 900
     sr.InstanceNumber = 1
     sr.Modality = "SR"
@@ -370,7 +399,14 @@ def _summary_text(results: list[ImageResult]) -> str:
 
 
 def build_secondary_capture(
-    png_bytes: bytes, source_path: Path, description: str, instance_number: int, series_uid: str
+    png_bytes: bytes,
+    source_path: Path,
+    description: str,
+    instance_number: int,
+    series_uid: str,
+    sop_uid: str | None = None,
+    when: datetime | None = None,
+    study_uid: str | None = None,
 ) -> FileDataset:
     """Разметка поверх снимка, упакованная в DICOM Secondary Capture."""
     img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
@@ -382,15 +418,15 @@ def build_secondary_capture(
     except Exception:  # noqa: BLE001
         source = None
 
-    now = datetime.now(UTC)
+    now = when or datetime.now(UTC)
     meta = FileMetaDataset()
     meta.MediaStorageSOPClassUID = SECONDARY_CAPTURE
-    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.MediaStorageSOPInstanceUID = sop_uid or generate_uid()
     meta.TransferSyntaxUID = ExplicitVRLittleEndian
     ds = FileDataset("sc.dcm", {}, file_meta=meta, preamble=b"\0" * 128)
     _passthrough(ds, source)
     if not getattr(ds, "StudyInstanceUID", ""):
-        ds.StudyInstanceUID = generate_uid()
+        ds.StudyInstanceUID = study_uid or generate_uid()
 
     ds.SOPClassUID = SECONDARY_CAPTURE
     ds.SOPInstanceUID = meta.MediaStorageSOPInstanceUID

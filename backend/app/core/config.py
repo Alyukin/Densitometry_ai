@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     thresholds_path: str = Field(
         default="", description="Свой файл порогов для rulebased; пусто — пороги из состава пакета"
     )
+    second_opinion: bool = Field(
+        default=True,
+        description="Справочная оценка нейросети для бедра рядом с проверками правил; в вердикт не входит",
+    )
+    second_opinion_dir: str = Field(default="", description="Папка с моделью второго мнения; пусто — из состава пакета")
     worker_concurrency: int = Field(default=2, ge=1, description="Количество параллельных задач обработки")
     processing_timeout_sec: int = Field(default=180, description="Лимит времени на исследование (ТЗ: ≤ 3 мин)")
     mock_delay_per_image_sec: float = Field(default=1.5, ge=0, description="Искусственная задержка mock-обработки")

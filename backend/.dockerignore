@@ -4,4 +4,5 @@ __pycache__
 .ruff_cache
 data
 app/static/docs
+app/processing/second_opinion_model/*.onnx
 .env

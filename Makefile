@@ -67,4 +67,7 @@ samples: $(VENV) ## Сгенерировать синтетические DICOM 
 smoke: ## Проверить запущенный сервис: загрузка → обработка → CSV
 	bash ./scripts/smoke_test.sh
 
-.PHONY: help up down logs ps clean test-docker install dev-backend dev-frontend test lint localization samples smoke
+package: ## Пакет для сдачи в dist/: образы, compose без сборки, пороги, отчёты
+	bash ./scripts/package.sh
+
+.PHONY: help up down logs ps clean test-docker install dev-backend dev-frontend test lint localization samples smoke package

@@ -288,4 +288,6 @@ def image_overlay(study_id: str, image_id: str, db: DbDep, settings: SettingsDep
             ) from exc
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_bytes(png)
-    return FileResponse(cache, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+    # Разметка меняется при повторной обработке — браузер каждый раз сверяется с сервером
+    # (при неизменном файле ответ 304 по ETag), а не держит старую картинку сутки.
+    return FileResponse(cache, media_type="image/png", headers={"Cache-Control": "no-cache"})

@@ -47,7 +47,7 @@ COMBS = ("max", "mean", "noisy_or", "mean_all")
 
 def combine(verdict, name: str) -> float:  # noqa: ANN001
     decisive = [c.score for c in verdict.checks if c.decides]
-    every = [c.score for c in verdict.checks]
+    every = [c.score for c in verdict.checks if c.in_score]  # как в dxaqc.rules.quality_score
     if name == "max":
         return max(decisive, default=0.0)
     if name == "mean":

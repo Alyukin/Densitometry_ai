@@ -93,6 +93,9 @@ class StudyImage(Base):
     # исследование, чтобы в выгрузке была строка с processing_status = Failure
     # (так заказчик определил Failure), а здесь записана причина.
     invalid_reason: Mapped[str | None] = mapped_column(String(255))
+    # SHA-256 содержимого нераспознанного файла: UID у него нет, и повторную загрузку того
+    # же файла можно узнать только по содержимому (вместе с именем).
+    content_sha256: Mapped[str | None] = mapped_column(String(64))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

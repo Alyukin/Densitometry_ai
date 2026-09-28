@@ -20,11 +20,15 @@ class TaskRunner:
         self.workers = workers
         self._executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="study-worker")
         self._inflight: set[str] = set()
+        # Поставлены в очередь, пока предыдущая обработка того же исследования ещё не
+        # вышла из _run: иначе запуск терялся бы, и исследование навсегда оставалось в queued.
+        self._again: set[str] = set()
         self._lock = threading.Lock()
 
     def submit(self, study_id: str) -> bool:
         with self._lock:
             if study_id in self._inflight:
+                self._again.add(study_id)
                 return False
             self._inflight.add(study_id)
         self._executor.submit(self._run, study_id)
@@ -39,6 +43,11 @@ class TaskRunner:
         finally:
             with self._lock:
                 self._inflight.discard(study_id)
+                again = study_id in self._again
+                self._again.discard(study_id)
+            if again:
+                # process_study сам проверит, что исследование всё ещё в очереди
+                self.submit(study_id)
 
     @property
     def inflight(self) -> int:

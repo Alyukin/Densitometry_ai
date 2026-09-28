@@ -7,11 +7,16 @@ __pycache__/
 .mypy_cache/
 backend/data/
 backend/app/static/docs/
+# ONNX второго мнения собирается из публичных весов при сборке образа (backend/Dockerfile)
+backend/app/processing/second_opinion_model/*.onnx
 
 # Node
 frontend/node_modules/
 frontend/dist/
 frontend/*.tsbuildinfo
+
+# Пакет для сдачи (scripts/package.sh)
+dist/
 
 # Runtime data / secrets
 data/

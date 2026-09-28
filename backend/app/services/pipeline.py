@@ -98,6 +98,10 @@ def process_study(study_id: str) -> None:
             for i in images
         ]
 
+    # PNG с разметкой строится по результату, а результат сейчас пересчитается
+    for stale in (settings.data_dir / "previews" / study_id).glob("*_overlay.png"):
+        stale.unlink(missing_ok=True)
+
     if not inputs:
         mark_failed(study_id, "В исследовании нет изображений")
         return

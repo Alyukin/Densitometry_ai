@@ -27,13 +27,16 @@
     "op": ">"
   },
   "spine_metal": {
-    "threshold": Infinity,
+    "threshold": 0.0,
     "soft_width": 0.001,
-    "enabled": false,
+    "enabled": true,
     "train_ba": 0.5,
+    "decides": false,
     "source": "разметка",
     "feature": "metal_area",
-    "op": ">"
+    "op": ">",
+    "threshold_tz": 0.0,
+    "note": "порог ТЗ = 0.0, справочно: в вердикт не входит"
   },
   "femur_ischium": {
     "threshold": 0.024530030959752314,

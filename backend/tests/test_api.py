@@ -138,6 +138,23 @@ def test_empty_file_is_a_failure_row_but_documents_and_junk_are_skipped(client: 
     assert len(r.json()["studies"]) == 1  # только пустой файл, служебный пропущен молча
 
 
+def test_spreadsheet_next_to_the_scans_is_not_unpacked(client: TestClient, samples: Path) -> None:
+    """.xlsx — ZIP внутри: таблица разметки не должна распаковаться в строки Failure."""
+    from openpyxl import Workbook
+
+    book = samples.parent / "разметка_настоящая.xlsx"
+    Workbook().save(book)
+    r = upload(
+        client,
+        (book, "НД/разметка.xlsx"),
+        (samples / "study_spine_01/IM0001.dcm", "НД/study/IM0001.dcm"),
+    )
+    assert r.status_code == 201, r.text
+    assert [x["filename"] for x in r.json()["rejected"]] == ["НД/разметка.xlsx"]
+    assert [s["image_count"] for s in r.json()["studies"]] == [1]
+    assert not r.json()["warnings"]
+
+
 def test_upload_duplicate_sop_rejected(client: TestClient, samples: Path) -> None:
     p = samples / "study_spine_01/IM0001.dcm"
     r = upload(client, (p, "a.dcm"), (p, "b.dcm"))
@@ -191,6 +208,34 @@ def test_images_are_not_added_to_a_study_being_processed(client: TestClient, sam
     assert r.status_code == 422
     assert "обрабатывается" in r.json()["detail"]["rejected"][0]["reason"]
     assert client.get(f"/api/v1/studies/{sid}").json()["image_count"] == 1
+
+
+def test_parts_of_an_unprocessed_study_merge_silently(client: TestClient, samples: Path) -> None:
+    """Сайт шлёт большую папку частями: исследование собирается без лишних предупреждений."""
+    first = upload(client, (samples / "study_hip_01/IM0001.dcm", "study_hip_01/IM0001.dcm")).json()["studies"][0]
+    r = upload(client, (samples / "study_hip_01/IM0002.dcm", "study_hip_01/IM0002.dcm"))
+    assert r.json()["studies"][0]["id"] == first["id"]
+    assert r.json()["studies"][0]["image_count"] == 2
+    assert not any("Добавлено снимков" in w for w in r.json()["warnings"])
+
+
+def test_reupload_of_a_broken_file_is_rejected(client: TestClient, samples: Path) -> None:
+    broken = samples / "edge_cases/not_a_dicom.dcm"
+    assert upload(client, (broken, "study/broken.dcm")).status_code == 201
+    r = upload(client, (broken, "study/broken.dcm"))
+    assert r.status_code == 422
+    assert r.json()["detail"]["rejected"][0]["reason"].startswith("Уже загружен")
+    assert client.get("/api/v1/studies").json()["total"] == 1
+
+
+def test_identical_broken_files_with_different_names_each_get_a_row(client: TestClient, samples: Path) -> None:
+    """Два разных пустых файла одинаковы по байтам, но строка Failure нужна каждому."""
+    empty = samples.parent / "empty_twice.dcm"
+    empty.write_bytes(b"")
+    r = upload(client, (empty, "a.dcm"), (empty, "b.dcm"))
+    assert r.status_code == 201
+    assert sum(s["image_count"] for s in r.json()["studies"]) == 2
+    assert r.json()["rejected"] == []
 
 
 def test_full_processing_flow(client: TestClient, samples: Path) -> None:

@@ -17,7 +17,11 @@ ProcessorFactory = Callable[[Settings], BaseProcessor]
 
 _REGISTRY: dict[str, ProcessorFactory] = {
     # Рабочий baseline: измерения по снимку + явные правила из ТЗ, без обучения.
-    "rulebased": lambda s: RuleBasedProcessor(thresholds_path=s.thresholds_path or None),
+    "rulebased": lambda s: RuleBasedProcessor(
+        thresholds_path=s.thresholds_path or None,
+        second_opinion=s.second_opinion,
+        second_opinion_dir=s.second_opinion_dir or None,
+    ),
     # Тестовые результаты без какой-либо обработки изображения.
     "mock": lambda s: MockProcessor(delay_per_image_sec=s.mock_delay_per_image_sec, seed=s.mock_seed),
     # Обучаемая модель подключается сюда же и сравнивается с baseline на тех же метриках:

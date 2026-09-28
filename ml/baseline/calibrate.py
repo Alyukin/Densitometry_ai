@@ -166,8 +166,8 @@ def fit_rules(rows: list[dict], min_specificity: float, min_gain: float = 0.02, 
                 }
                 # Проверку, которой требует ТЗ, отбор может не взять в вердикт — тогда
                 # она остаётся справочной, с порогом ТЗ, если он там записан. На
-                # вердикт и метрики это не влияет: у бедра quality_prob — максимум по
-                # решающим проверкам.
+                # вердикт и метрики это не влияет: проверка не решающая и в quality_prob
+                # не входит (Check.in_score).
                 if rid not in chosen and RULES[rid].get("reference_when_off"):
                     cfg[rid].update(
                         enabled=True,
@@ -317,7 +317,12 @@ def main() -> None:
                 else f"порог ТЗ = {TZ_THRESHOLDS[rid]}, рабочий порог подобран по разметке"
             )
 
-    Path(args.out_thresholds).write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    for c in cfg.values():  # порог, который не нашёлся (inf), — null: JSON без Infinity читается везде
+        if not np.isfinite(c["threshold"]):
+            c["threshold"] = None
+    Path(args.out_thresholds).write_text(
+        json.dumps(cfg, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8"
+    )
     Path(args.out_metrics).write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"пороги -> {args.out_thresholds}\nметрики -> {args.out_metrics}\n")

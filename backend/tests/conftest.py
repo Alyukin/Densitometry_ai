@@ -18,12 +18,17 @@ def samples(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return out
 
 
-def _make_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str) -> Iterator[TestClient]:
+def _make_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str, second_opinion: bool = False
+) -> Iterator[TestClient]:
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("DATABASE_URL", "")
     monkeypatch.setenv("MOCK_DELAY_PER_IMAGE_SEC", "0")
     monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setenv("PROCESSOR_BACKEND", backend)
+    # второе мнение проверяется в test_second_opinion.py; здесь без него, чтобы тесты не
+    # зависели от того, собран ли ONNX (в тестовом образе Docker его нет)
+    monkeypatch.setenv("SECOND_OPINION", "true" if second_opinion else "false")
     get_settings.cache_clear()
     reset_engine()
     reset_processor()

@@ -65,6 +65,9 @@ class Check:
     tz_threshold: float | None = None  # порог, прямо записанный в ТЗ
     tz_fired: bool | None = None  # сработала ли проверка по букве ТЗ
     note: str = ""
+    # Входит ли в quality_prob при сложении «mean_all». Проверки, которые калибровка
+    # перевела в справочные (reference_when_off), — нет: способ сложения выбирался без них.
+    in_score: bool = True
 
 
 @dataclass
@@ -109,6 +112,8 @@ TZ_THRESHOLDS = {
     "spine_axis_tz": 5.0,  # «допустимый наклон до 5 градусов»
     "femur_roi_vertical": 3.0,  # «по 3 см сверху и снизу от области интереса»
     "femur_roi_horizontal": 2.0,  # «2 см от края правого и левого»
+    # «отсутствие ... металлических предметов»: по букве — любой насыщенный объект вне кости
+    "spine_metal": 0.0,
 }
 
 # Описание проверок: id -> параметры. Пороги подставляются из thresholds.json.
@@ -181,7 +186,10 @@ RULES: dict[str, dict] = {
         "criterion": "по ТЗ посторонних предметов, выраженных артефактов и наложений быть не должно",
         "source": "разметка",
     },
+    # На выгрузке площадь металла не разделяет классы, отбор её в вердикт не берёт;
+    # показывается справочно, по букве ТЗ (любой металл вне кости).
     "spine_metal": {
+        "reference_when_off": True,
         "region": REGION_SPINE,
         "violation": VIOL_FOREIGN,
         "feature": "metal_area",
@@ -224,7 +232,7 @@ RULES: dict[str, dict] = {
         "feature": "lt_prominence_rel",
         "op": "<",
         "requires": ("lt_measured", 1),
-        "title": "Выступ малого вертела",
+        "title": "Выступ малого вертела (переротация)",
         "unit": "× ширины диафиза",
         "criterion": "по ТЗ (рис. 5б) при переротации контур плавный и не деформирован малым вертелом",
         "source": "разметка",
@@ -236,7 +244,7 @@ RULES: dict[str, dict] = {
         "feature": "lt_prominence_rel",
         "op": ">",
         "requires": ("lt_measured", 1),
-        "title": "Выступ малого вертела",
+        "title": "Выступ малого вертела (недоротация)",
         "unit": "× ширины диафиза",
         "criterion": "по ТЗ (рис. 5в) при недоротации малый вертел слишком большой",
         "source": "разметка",
@@ -306,7 +314,7 @@ QUALITY_SCORE = {REGION_SPINE: "mean_all", REGION_FEMUR: "max"}
 
 def quality_score(region: str, checks: list[Check]) -> float:
     if QUALITY_SCORE.get(region) == "mean_all":
-        scores = [c.score for c in checks]
+        scores = [c.score for c in checks if c.in_score]
         return sum(scores) / len(scores) if scores else 0.0
     return max((c.score for c in checks if c.decides), default=0.0)
 
@@ -382,7 +390,7 @@ def evaluate(region: str, measurements: dict, thresholds: dict | None = None) ->
         if spec["region"] != region:
             continue
         cfg = th.get(rule_id)
-        if cfg is None or not cfg.get("enabled", True):
+        if cfg is None or not cfg.get("enabled", True) or cfg.get("threshold") is None:
             continue
         req = spec.get("requires")
         if req is not None and float(measurements.get(req[0], 0)) != req[1]:
@@ -413,6 +421,7 @@ def evaluate(region: str, measurements: dict, thresholds: dict | None = None) ->
                 source=spec["source"],
                 # калибровка может перевести правило в справочные (reference_when_off)
                 decides=spec.get("decides", True) and cfg.get("decides", True),
+                in_score=not (spec.get("decides", True) and not cfg.get("decides", True)),
                 tz_threshold=tz,
                 tz_fired=tz_fired,
                 note=cfg.get("note", ""),

@@ -26,7 +26,10 @@ services:
     volumes:
       - densitometry-data:/data
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      # Только локальный адрес машины: backend без авторизации отдаёт и DICOM SR с данными
+      # пациента, поэтому снаружи доступен лишь сайт (nginx). Запасной путь из frontend
+      # через host.docker.internal требует BACKEND_BIND=0.0.0.0 — см. .env.example.
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]

@@ -115,6 +115,47 @@ export const api = {
 
   assetUrl: (path: string) => `${API_BASE}${path}`,
 
+  /**
+   * Загрузка любого числа файлов: частями, по очереди, с общим прогрессом.
+   * Сервер принимает не больше MAX_FILES_PER_UPLOAD файлов за запрос (по умолчанию 500),
+   * а исследование, пришедшее в нескольких частях, сам собирает обратно по StudyInstanceUID.
+   */
+  uploadAll: async (files: UploadItem[], onProgress?: (fraction: number) => void): Promise<UploadResponse> => {
+    const chunks = chunkUploads(files);
+    const total = files.reduce((a, f) => a + f.file.size, 0) || 1;
+    const studies = new Map<string, UploadResponse["studies"][number]>();
+    const rejected: UploadResponse["rejected"] = [];
+    const warnings: string[] = [];
+    let done = 0;
+    for (const [k, chunk] of chunks.entries()) {
+      const size = chunk.reduce((a, f) => a + f.file.size, 0);
+      try {
+        const res = await api.upload(chunk, (f) => onProgress?.((done + f * size) / total));
+        res.studies.forEach((s) => studies.set(s.id, s)); // позже пришедшая часть — свежее
+        rejected.push(...res.rejected);
+        warnings.push(...res.warnings);
+      } catch (e) {
+        const err = e as ApiError;
+        const detail = (err.payload as { detail?: { rejected?: UploadResponse["rejected"] } } | undefined)?.detail;
+        // «в этой части нет новых снимков» — не повод бросать остальные части
+        if (err.status === 422 && detail?.rejected) {
+          rejected.push(...detail.rejected);
+        } else {
+          const partial = k ? ` (отправлено частей: ${k} из ${chunks.length})` : "";
+          throw new ApiError(err.status, `${err.message}${partial}`, err.payload);
+        }
+      }
+      done += size;
+    }
+    if (!studies.size && rejected.length) {
+      const message = rejected.some((r) => r.reason.startsWith("Уже загружен"))
+        ? "Новых снимков нет: эти файлы уже загружены"
+        : "Ни один файл не распознан как DICOM";
+      throw new ApiError(422, message, { detail: { message, rejected } });
+    }
+    return { studies: [...studies.values()], rejected, warnings: [...new Set(warnings)] };
+  },
+
   /** Multipart upload with progress (fetch has no upload progress events). */
   upload: (files: UploadItem[], onProgress?: (fraction: number) => void) =>
     new Promise<UploadResponse>((resolve, reject) => {
@@ -136,6 +177,30 @@ export const api = {
       xhr.send(form);
     }),
 };
+
+/** Файлов за запрос — с запасом меньше серверного MAX_FILES_PER_UPLOAD (500 по умолчанию). */
+const CHUNK_FILES = 200;
+/** Байт за запрос — с запасом меньше MAX_UPLOAD_SIZE_MB (1024 по умолчанию). */
+const CHUNK_BYTES = 256 * 1024 * 1024;
+
+/** Делит файлы на части; файлы одной папки идут подряд, чтобы исследование реже рвалось. */
+export function chunkUploads(files: UploadItem[]): UploadItem[][] {
+  const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name));
+  const chunks: UploadItem[][] = [];
+  let cur: UploadItem[] = [];
+  let size = 0;
+  for (const item of sorted) {
+    if (cur.length && (cur.length >= CHUNK_FILES || size + item.file.size > CHUNK_BYTES)) {
+      chunks.push(cur);
+      cur = [];
+      size = 0;
+    }
+    cur.push(item);
+    size += item.file.size;
+  }
+  if (cur.length) chunks.push(cur);
+  return chunks;
+}
 
 /** Trigger a file download and surface API errors (e.g. 409) instead of navigating to JSON. */
 export async function downloadFile(url: string): Promise<void> {

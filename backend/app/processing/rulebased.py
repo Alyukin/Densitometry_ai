@@ -27,6 +27,7 @@ from app.processing.base import BaseProcessor, ImageInput, ImagePrediction, Proc
 from app.processing.dxaqc.analyze import VERSION, Analyzer
 from app.processing.dxaqc.image import PIXEL_MM_X, PIXEL_MM_Y, Spacing
 from app.processing.intake import non_standard
+from app.processing.second_opinion import SecondOpinion
 
 logger = logging.getLogger(__name__)
 
@@ -66,14 +67,28 @@ class RuleBasedProcessor(BaseProcessor):
     version = VERSION
     is_mock = False
 
-    def __init__(self, thresholds_path: str | None = None) -> None:
+    def __init__(
+        self,
+        thresholds_path: str | None = None,
+        second_opinion: bool = True,
+        second_opinion_dir: str | None = None,
+    ) -> None:
         self.thresholds_path = thresholds_path
         self._analyzer: Analyzer | None = None
+        self._want_second = second_opinion
+        self._second_dir = second_opinion_dir
+        self._second: SecondOpinion | None = None
 
     def load(self) -> None:
         self._analyzer = Analyzer(self.thresholds_path)
         n = len([c for c in self._analyzer.thresholds.values() if c.get("enabled", True)])
         logger.info("Rule-based processor loaded: %s активных правил", n)
+        if self._want_second:
+            second = SecondOpinion(self._second_dir)
+            if second.load():
+                self._second = second
+            else:
+                logger.info("Второе мнение нейросети выключено: %s", second.error)
 
     def predict(self, image: ImageInput) -> ImagePrediction:
         if self._analyzer is None:
@@ -97,6 +112,20 @@ class RuleBasedProcessor(BaseProcessor):
         if not res.ok:
             raise ProcessingError(res.error or "Не удалось выполнить измерения")
 
+        checks = list(res.checks)
+        extra: dict = {}
+        if self._second is not None:
+            # справочно: ни вердикт, ни quality_prob от этого не зависят, поэтому сбой модели
+            # не должен ронять обработку снимка
+            try:
+                nn = self._second.checks(arr, res.region)
+                if nn:
+                    checks += nn
+                    extra["second_opinion"] = {"model": self._second.model, "checks": [c["rule_id"] for c in nn]}
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Второе мнение не посчиталось: %s", exc, exc_info=True)
+                extra["second_opinion_error"] = f"{type(exc).__name__}: {exc}"
+
         return ImagePrediction(
             anatomical_region=res.region,
             quality_class=QUALITY_BAD if res.violations else QUALITY_OK,
@@ -109,8 +138,9 @@ class RuleBasedProcessor(BaseProcessor):
                 "quality_prob": round(res.quality_prob, 4),
                 "pixel_spacing_mm": {"y": sp.y, "x": sp.x},
                 "explanation": res.explanation,
-                "checks": res.checks,
+                "checks": checks,
                 "measurements": res.measurements,
                 "overlay": res.overlay,
+                **extra,
             },
         )

@@ -244,6 +244,22 @@ def test_review_of_unknown_image_is_404(rb_client: TestClient, processed) -> Non
     assert r.status_code == 404
 
 
+def test_sr_uid_is_stable_until_the_content_changes(rb_client: TestClient, processed) -> None:
+    """Повторное скачивание — тот же объект, а не копия в PACS; решение врача — новый экземпляр."""
+    sid, rows = processed
+
+    def sr():  # noqa: ANN202
+        return pydicom.dcmread(io.BytesIO(rb_client.get(f"/api/v1/studies/{sid}/sr").content))
+
+    a, b = sr(), sr()
+    assert a.SOPInstanceUID == b.SOPInstanceUID
+    assert (a.ContentDate, a.ContentTime) == (b.ContentDate, b.ContentTime)
+    rb_client.post(f"/api/v1/studies/{sid}/images/{rows[0]['image_id']}/review", json={"action": "confirm"})
+    c = sr()
+    assert c.SOPInstanceUID != a.SOPInstanceUID
+    assert c.SeriesInstanceUID == a.SeriesInstanceUID
+
+
 # --- проверка специалистом переживает повторную обработку ------------------------
 
 

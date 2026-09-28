@@ -189,3 +189,24 @@ def test_tiny_image_is_non_standard(rb_client: TestClient, samples: Path) -> Non
     exported = next(csv.DictReader(io.StringIO(text)))
     assert exported["processing_status"] == "Success"
     assert exported["anatomical_region"] == exported["quality_class"] == exported["quality_prob"] == ""
+
+
+def test_overlay_is_rebuilt_after_reprocessing(rb_client: TestClient, samples: Path) -> None:
+    """Старая разметка не должна пережить повторную обработку — ни на диске, ни в браузере."""
+    from app.core.config import get_settings
+
+    f = next((samples / "study_hip_02_rotated").glob("*.dcm"))
+    sid = upload(rb_client, (f, f.name)).json()["studies"][0]["id"]
+    rb_client.post(f"/api/v1/studies/{sid}/process")
+    wait_done(rb_client, sid)
+    image_id = rb_client.get(f"/api/v1/studies/{sid}/result").json()["rows"][0]["image_id"]
+    r = rb_client.get(f"/api/v1/studies/{sid}/images/{image_id}/overlay")
+    assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-cache"
+    cached = get_settings().data_dir / "previews" / sid / f"{image_id}_overlay.png"
+    assert cached.exists()
+
+    rb_client.post(f"/api/v1/studies/{sid}/process")
+    wait_done(rb_client, sid)
+    assert not cached.exists()
+    assert rb_client.get(f"/api/v1/studies/{sid}/images/{image_id}/overlay").status_code == 200

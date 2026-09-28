@@ -198,6 +198,25 @@ def test_shipped_thresholds_show_every_femur_tz_check() -> None:
     assert checks["femur_roi_horizontal"].threshold == 2.0
 
 
+def test_rule_without_threshold_is_skipped() -> None:
+    """Порог, который не нашёлся при калибровке, пишется в thresholds.json как null."""
+    th = {"spine_axis": {"threshold": None, "soft_width": 1.0, "enabled": True}}
+    assert evaluate(REGION_SPINE, {"axis_edge_deg": 99.0}, th).checks == []
+
+
+def test_metal_is_shown_by_the_letter_of_tz_but_moves_nothing() -> None:
+    """Металл — справочно, порог ТЗ 0: ни класс, ни quality_prob позвоночника он не трогает."""
+    th = load_thresholds()
+    base = {spec["feature"]: 0.0 for spec in RULES.values() if spec["region"] == REGION_SPINE}
+    base["iliac_score"] = 10.0
+    calm = evaluate(REGION_SPINE, base, th)
+    metal = evaluate(REGION_SPINE, {**base, "metal_area": 500.0}, th)
+    check = next(c for c in metal.checks if c.rule_id == "spine_metal")
+    assert check.fired and check.tz_fired and not check.decides and not check.in_score
+    assert metal.quality_class == calm.quality_class == 0
+    assert metal.quality_prob == calm.quality_prob
+
+
 def test_all_tz_checks_are_implemented() -> None:
     """Каждая проверка из раздела 2.3 ТЗ должна иметь правило."""
     features = {spec["feature"] for spec in RULES.values()}
