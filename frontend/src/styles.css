@@ -226,29 +226,6 @@ main.container {
     grid-template-columns: 1fr;
   }
 }
-.footer {
-  color: var(--text-3);
-  font-size: 12px;
-  padding-bottom: 24px;
-}
-
-.banner {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 10px 14px;
-  border-radius: var(--radius-sm);
-  background: var(--violet-soft);
-  color: var(--text);
-  border: 1px solid color-mix(in srgb, var(--violet) 25%, transparent);
-  font-size: 13px;
-}
-.banner svg {
-  color: var(--violet);
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
 /* ---------- Cards ---------- */
 .card {
   background: var(--surface);
@@ -879,7 +856,7 @@ input[type="checkbox"] {
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(640px, 100vw);
+  width: min(1000px, 100vw);
   background: var(--bg);
   z-index: 41;
   box-shadow: var(--shadow-lg);
@@ -1003,7 +980,8 @@ input[type="checkbox"] {
 }
 .result {
   display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
+  /* снимок крупно — чтобы разметка на нём читалась; на узком экране сжимается */
+  grid-template-columns: clamp(140px, 32%, 300px) minmax(0, 1fr);
   gap: 14px;
   padding: 12px;
   border: 1px solid var(--border);
@@ -1070,6 +1048,11 @@ input[type="checkbox"] {
   flex-direction: column;
   gap: 4px;
   font-size: 12.5px;
+}
+/* Второе мнение ИИ-модели — под тонкой линией, отдельно от проверок правил */
+.checks--ai {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
 }
 .checks li {
   display: flex;

@@ -219,6 +219,29 @@ def test_parts_of_an_unprocessed_study_merge_silently(client: TestClient, sample
     assert not any("Добавлено снимков" in w for w in r.json()["warnings"])
 
 
+def test_study_in_several_series_folders_gets_its_common_folder(client: TestClient, samples: Path) -> None:
+    """path_to_study — общая папка серий, а не путь к первому файлу."""
+    r = upload(
+        client,
+        (samples / "study_hip_01/IM0001.dcm", "Исследования/2.25.1/series_1/CR DXA/IM0001.dcm"),
+        (samples / "study_hip_01/IM0002.dcm", "Исследования/2.25.1/series_2/CR DXA/IM0002.dcm"),
+    )
+    [study] = r.json()["studies"]
+    assert study["source_path"] == "Исследования/2.25.1"
+    client.post(f"/api/v1/studies/{study['id']}/process")
+    wait_done(client, study["id"])
+    text = client.get(f"/api/v1/studies/{study['id']}/download?format=csv").content.decode("utf-8")
+    assert {row["path_to_study"] for row in csv.DictReader(io.StringIO(text))} == {"Исследования/2.25.1"}
+
+
+def test_series_folders_in_different_parts_widen_the_path(client: TestClient, samples: Path) -> None:
+    """Сайт шлёт папку частями; серии одного исследования могут попасть в разные части."""
+    first = upload(client, (samples / "study_hip_01/IM0001.dcm", "Исследования/2.25.1/series_1/CR DXA/IM0001.dcm"))
+    assert first.json()["studies"][0]["source_path"] == "Исследования/2.25.1/series_1/CR DXA"
+    r = upload(client, (samples / "study_hip_01/IM0002.dcm", "Исследования/2.25.1/series_2/CR DXA/IM0002.dcm"))
+    assert r.json()["studies"][0]["source_path"] == "Исследования/2.25.1"
+
+
 def test_reupload_of_a_broken_file_is_rejected(client: TestClient, samples: Path) -> None:
     broken = samples / "edge_cases/not_a_dicom.dcm"
     assert upload(client, (broken, "study/broken.dcm")).status_code == 201

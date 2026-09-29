@@ -38,11 +38,15 @@ CONTENT_TYPES = {
 STATUS_TZ = {"success": "Success"}
 
 
+# «1» — значение quality_class по ТЗ; остальные — для mock-процессора
+QUALITY_BAD_VALUES = frozenset({"1", "unacceptable", "bad", "poor"})
+
+
 def _quality_class(value: str | None) -> int | str:
     """0 / 1 целым числом; пустая строка, если область не оценена."""
     if value is None or value == "":
         return ""
-    return 1 if str(value).strip().lower() in {"1", "unacceptable", "bad", "poor"} else 0
+    return 1 if str(value).strip().lower() in QUALITY_BAD_VALUES else 0
 
 
 # Что попадает в колонки ТЗ: «auto» — то, что решил сервис, «reviewed» — то, что
@@ -124,7 +128,6 @@ def to_xlsx(results: Iterable[ImageResult], is_mock: bool = False, source: str =
         if not checks:
             ws2.append([r.image_uid, "", "", "", "", "", "", "", "", r.error_message])
         for ch in checks:
-            value = ch.get("value")
             tz_fired = ch.get("tz_fired")
             ws2.append(
                 [
@@ -140,8 +143,6 @@ def to_xlsx(results: Iterable[ImageResult], is_mock: bool = False, source: str =
                     r.error_message,
                 ]
             )
-            if isinstance(value, dict):
-                ws2.cell(ws2.max_row, 3).comment = None
     _autosize(ws2)
 
     # Лист проверки специалистом: автоматический вердикт и решение врача рядом,

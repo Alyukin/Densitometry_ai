@@ -1,6 +1,6 @@
-"""«Второе мнение» нейросети для бедра — справочно, в вердикт не входит.
+"""«Второе мнение» ИИ-модели для бедра — справочно, в вердикт не входит.
 
-Гибрид правил и модели (этап 7, questions.md К2 от 27.09) у правил не выиграл: вердикт
+Гибрид правил и модели (этап 7, OVERVIEW.md, К2 от 27.09) у правил не выиграл: вердикт
 выносят правила. Модель показывается рядом, как справочная проверка, и только для
 бедра — там она вровень с правилами (ROC AUC 0.67–0.80), на позвоночнике почти случайна.
 
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 MODEL_DIR = Path(__file__).with_name("second_opinion_model")
 ONNX_NAME = "xrv_densenet121.onnx"
 PROBE_NAME = "xrv_probe.json"
-SOURCE = "нейросеть"
+SOURCE = "ИИ-модель"
 
 
 def preprocess(arr: np.ndarray, height: int, width: int) -> np.ndarray:
@@ -74,11 +74,11 @@ def make_check(key: str, task: dict, value: float) -> dict:
             threshold=0.5,
             op=">",
             score=round(value, 4),
-            title=f"Нейросеть: {label}",
-            measured=f"Оценка нейросети «{label}»: {value:.2f}",
+            title=f"ИИ-модель: {label}",
+            measured=f"Оценка ИИ-модели «{label}»: {value:.2f}",
             criterion=(
                 "замороженный DenseNet121 (TorchXRayVision) и логистическая регрессия; 0.5 и "
-                "выше — нейросеть видит нарушение; точность на отложенных данных ROC AUC "
+                "выше — ИИ-модель видит нарушение; точность на отложенных данных ROC AUC "
                 f"{task['oof_roc_auc']:.2f}"
             ),
             source=SOURCE,
@@ -130,7 +130,7 @@ class SecondOpinion:
         return self._session.run(None, {"image": x})[0][0]
 
     def checks(self, arr: np.ndarray, region: str) -> list[dict]:
-        """Справочные проверки нейросети для области; пусто, если для неё модели нет."""
+        """Справочные проверки ИИ-модели для области; пусто, если для неё модели нет."""
         assert self._probe is not None
         tasks = {k: t for k, t in self._probe["tasks"].items() if t["region"] == region}
         if not tasks:

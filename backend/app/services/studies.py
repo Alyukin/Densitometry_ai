@@ -21,10 +21,8 @@ from app.schemas.study import (
     StudyStatusOut,
     StudySummary,
 )
+from app.services.export import QUALITY_BAD_VALUES
 from app.services.task_runner import TaskRunner
-
-# «1» — значение quality_class по ТЗ; остальные оставлены для mock-процессора
-QUALITY_BAD_VALUES = {"1", "unacceptable", "bad", "poor"}
 
 
 def get_study_or_404(db: Session, study_id: str) -> Study:

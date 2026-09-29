@@ -21,7 +21,7 @@ from app.services import export, package, review
 from app.services import studies as svc
 from app.services.dicom import render_preview_png
 from app.services.dicom_sr import build_sr, to_bytes
-from app.services.overlay import render_overlay_png
+from app.services.overlay import OVERLAY_VERSION, render_overlay_png
 from app.services.upload import ALREADY_UPLOADED, UploadLimitError, UploadService
 
 router = APIRouter(prefix="/api/v1/studies", tags=["studies"])
@@ -278,7 +278,7 @@ def image_overlay(study_id: str, image_id: str, db: DbDep, settings: SettingsDep
             status.HTTP_404_NOT_FOUND,
             "Разметка недоступна: исследование ещё не обработано или процессор её не возвращает",
         )
-    cache = settings.data_dir / "previews" / study.id / f"{image.id}_overlay.png"
+    cache = settings.data_dir / "previews" / study.id / f"{image.id}_overlay_v{OVERLAY_VERSION}.png"
     if not cache.exists():
         try:
             png = render_overlay_png(settings.data_dir / image.stored_path, overlay)

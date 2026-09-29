@@ -88,7 +88,7 @@ class RuleBasedProcessor(BaseProcessor):
             if second.load():
                 self._second = second
             else:
-                logger.info("Второе мнение нейросети выключено: %s", second.error)
+                logger.info("Второе мнение ИИ-модели выключено: %s", second.error)
 
     def predict(self, image: ImageInput) -> ImagePrediction:
         if self._analyzer is None:

@@ -18,7 +18,8 @@ from train.tasks import targets_for
 def to_tensor(a: np.ndarray, norm: str = "imagenet") -> torch.Tensor:
     """Кадр со значениями [0, 1] (H×W) -> вход сети в той нормировке, в которой учился бэкбон.
 
-    Одна функция и для обучения, и для инференса (`train.predict`): если нормировка
+    Одна функция и для обучения, и для зонда; сервис повторяет её в
+    `backend/app/processing/second_opinion.py::preprocess`. Если нормировка
     разойдётся, модель будет получать в бою не то, на чём училась, и ошибка будет тихой.
     """
     x = torch.from_numpy(np.ascontiguousarray(a, dtype=np.float32))[None]

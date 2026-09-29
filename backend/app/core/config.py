@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     )
     second_opinion: bool = Field(
         default=True,
-        description="Справочная оценка нейросети для бедра рядом с проверками правил; в вердикт не входит",
+        description="Справочная оценка ИИ-модели для бедра рядом с проверками правил; в вердикт не входит",
     )
     second_opinion_dir: str = Field(default="", description="Папка с моделью второго мнения; пусто — из состава пакета")
     worker_concurrency: int = Field(default=2, ge=1, description="Количество параллельных задач обработки")

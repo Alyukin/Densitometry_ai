@@ -1,4 +1,4 @@
-"""Второе мнение нейросети: справочно, только бедро, вердикт и выгрузку не трогает."""
+"""Второе мнение ИИ-модели: справочно, только бедро, вердикт и выгрузку не трогает."""
 
 from __future__ import annotations
 
@@ -114,6 +114,6 @@ def test_real_model_through_the_api(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         assert {c["rule_id"] for c in nn} == {"nn_femur_quality", "nn_femur_position", "nn_femur_roi"}
         assert all(0.0 <= c["value"] <= 1.0 and c["decides"] is False for c in nn)
         csv = client.get(f"/api/v1/studies/{sid}/download?format=csv").text
-        assert "нейросет" not in csv  # в выгрузку по ТЗ второе мнение не попадает
+        assert "ИИ-модел" not in csv  # в выгрузку по ТЗ второе мнение не попадает
     finally:
         gen.close()

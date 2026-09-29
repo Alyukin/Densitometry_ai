@@ -39,10 +39,8 @@ PY
 
 cp .env.example "$OUT/"
 cp backend/app/processing/dxaqc/thresholds.json "$OUT/"
-cp README.md status.md OVERVIEW.md roadmap.md questions.md "$OUT/docs/"
-cp ml/baseline/REPORT.md "$OUT/docs/REPORT_baseline.md"
+cp README.md OVERVIEW.md "$OUT/docs/"
 cp ml/baseline/metrics.json ml/baseline/localization_metrics.json "$OUT/docs/"
-cp ml/train/REPORT.md "$OUT/docs/REPORT_model.md"
 
 cat > "$OUT/INSTALL.txt" <<EOF
 Densitometry AI $VERSION — контроль качества DXA-исследований
@@ -54,7 +52,7 @@ Densitometry AI $VERSION — контроль качества DXA-исслед�
 
 Остановить — docker compose down, удалить все данные — docker compose down -v.
 Вердикт выносят правила ТЗ (пороги — thresholds.json, он же внутри образа).
-Оценка нейросети для бедра — справочно, выключается SECOND_OPINION=false в .env.
+Оценка ИИ-модели для бедра — справочно, выключается SECOND_OPINION=false в .env.
 Результаты не являются медицинским заключением. Подробности — docs/.
 EOF
 

@@ -2,7 +2,7 @@
 
 Для каждого прогона: сравнение с правилами на тех же снимках и фолдах (`train.compare`),
 остановка по фолдам, попарные разницы AUC между конфигурациями. В конце правило из К2
-(`questions.md`) применяется механически, без ручного выбора.
+(OVERVIEW.md, К2) применяется механически, без ручного выбора.
 
     python -m train.summary --runs runs/v2/resnet18 runs/v2/xrv-densenet121 runs/v2/xrv-densenet121_arak \\
         --features runs/v2/features.csv --reference runs/cnn --out runs/v2

@@ -99,7 +99,7 @@ def process_study(study_id: str) -> None:
         ]
 
     # PNG с разметкой строится по результату, а результат сейчас пересчитается
-    for stale in (settings.data_dir / "previews" / study_id).glob("*_overlay.png"):
+    for stale in (settings.data_dir / "previews" / study_id).glob("*_overlay*.png"):
         stale.unlink(missing_ok=True)
 
     if not inputs:

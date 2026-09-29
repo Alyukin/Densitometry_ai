@@ -4,14 +4,12 @@ import { IconExternal, Logo } from "./Icons";
 
 export function Header({ health, healthError }: { health: Health | null; healthError: boolean }) {
   const state = healthError ? "down" : !health ? "unknown" : health.status === "ok" ? "up" : "degraded";
-  const text =
-    state === "down"
-      ? "API недоступен"
-      : state === "unknown"
-        ? "Проверка API…"
-        : `API ${health!.status === "ok" ? "работает" : "частично доступен"} · ${health!.processor}${
-            health!.processor_version ? ` ${health!.processor_version}` : ""
-          }`;
+  const text = {
+    up: "API работает",
+    degraded: "API работает частично",
+    down: "API не работает",
+    unknown: "Проверка API…",
+  }[state];
 
   return (
     <header className="topbar">
@@ -24,7 +22,7 @@ export function Header({ health, healthError }: { health: Health | null; healthE
           </div>
         </div>
         <div className="topbar__right">
-          <span className={`api-pill api-pill--${state}`} title={health ? `v${health.version}` : undefined}>
+          <span className={`api-pill api-pill--${state}`}>
             <span className="dot" />
             <span className="api-pill__text">{text}</span>
           </span>

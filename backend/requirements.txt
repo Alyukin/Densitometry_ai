@@ -14,5 +14,5 @@ numpy==2.4.6
 scipy==1.17.1
 pillow==12.3.0
 openpyxl==3.1.5
-# второе мнение нейросети: замороженный DenseNet121 в ONNX (app/processing/second_opinion.py)
+# второе мнение ИИ-модели: замороженный DenseNet121 в ONNX (app/processing/second_opinion.py)
 onnxruntime==1.30.0

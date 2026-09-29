@@ -187,6 +187,40 @@ function ReviewBlock({
   );
 }
 
+function CheckList({ checks, className = "checks" }: { checks: CheckDetail[]; className?: string }) {
+  return (
+    <ul className={className}>
+      {[...checks]
+        .sort((a, b) => Number(a.decides === false) - Number(b.decides === false))
+        .map((c, i) => {
+          // rulebased отдаёт `fired` (нарушение найдено), mock — `passed` (проверка пройдена)
+          const bad = c.fired ?? c.passed === false;
+          const val = c.measured ?? formatCheckValue(c);
+          const info = c.decides === false;
+          const cls = info ? "check--info" : bad ? "check--bad" : "check--ok";
+          return (
+            <li key={c.rule_id ?? c.code ?? i} className={cls}>
+              <span className="check__icon">
+                {info ? "·" : bad ? <IconClose size={13} /> : <IconCheck size={13} />}
+              </span>
+              <span className="check__title">{c.measured ? c.measured : c.title}</span>
+              {!c.measured && val && <span className="check__val">{val}</span>}
+              {c.criterion && (
+                <span className="check__note" title={`Источник критерия: ${c.source ?? "—"}`}>
+                  {c.criterion}
+                  {c.tz_threshold != null && c.tz_fired != null && (
+                    <> · по букве ТЗ: {c.tz_fired ? "порог превышен" : "в норме"}</>
+                  )}
+                  {info && <> · справочно, в вердикт не входит</>}
+                </span>
+              )}
+            </li>
+          );
+        })}
+    </ul>
+  );
+}
+
 function ResultCard({
   studyId,
   row,
@@ -203,7 +237,10 @@ function ResultCard({
   const violations = splitViolations(row.violation_type);
   const ok = row.processing_status === "success";
   const nonStandard = ok ? (row.details?.non_standard ?? null) : null;
-  const checks = row.details?.checks ?? [];
+  const allChecks = row.details?.checks ?? [];
+  // оценки ИИ-модели (второе мнение, rule_id nn_*) — отдельным списком под тонкой линией
+  const checks = allChecks.filter((c) => !c.rule_id?.startsWith("nn_"));
+  const aiChecks = allChecks.filter((c) => c.rule_id?.startsWith("nn_"));
   const [showOverlay, setShowOverlay] = useState(true);
   const src = showOverlay && overlayUrl ? overlayUrl : preview;
   return (
@@ -262,37 +299,8 @@ function ResultCard({
           </div>
         )}
 
-        {checks.length > 0 && (
-          <ul className="checks">
-            {[...checks]
-              .sort((a, b) => Number(a.decides === false) - Number(b.decides === false))
-              .map((c, i) => {
-                // rulebased отдаёт `fired` (нарушение найдено), mock — `passed` (проверка пройдена)
-                const bad = c.fired ?? c.passed === false;
-                const val = c.measured ?? formatCheckValue(c);
-                const info = c.decides === false;
-                const cls = info ? "check--info" : bad ? "check--bad" : "check--ok";
-                return (
-                  <li key={c.rule_id ?? c.code ?? i} className={cls}>
-                    <span className="check__icon">
-                      {info ? "·" : bad ? <IconClose size={13} /> : <IconCheck size={13} />}
-                    </span>
-                    <span className="check__title">{c.measured ? c.measured : c.title}</span>
-                    {!c.measured && val && <span className="check__val">{val}</span>}
-                    {c.criterion && (
-                      <span className="check__note" title={`Источник критерия: ${c.source ?? "—"}`}>
-                        {c.criterion}
-                        {c.tz_threshold != null && c.tz_fired != null && (
-                          <> · по букве ТЗ: {c.tz_fired ? "порог превышен" : "в норме"}</>
-                        )}
-                        {info && <> · справочно, в вердикт не входит</>}
-                      </span>
-                    )}
-                  </li>
-                );
-              })}
-          </ul>
-        )}
+        {checks.length > 0 && <CheckList checks={checks} />}
+        {aiChecks.length > 0 && <CheckList checks={aiChecks} className="checks checks--ai" />}
 
         <div className="result__meta">
           {row.confidence != null && <span>Уверенность: {(row.confidence * 100).toFixed(0)}%</span>}

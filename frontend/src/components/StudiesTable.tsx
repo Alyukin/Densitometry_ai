@@ -19,6 +19,7 @@ interface Props {
   onDownload: (id: string, format: ExportFormat) => void;
   onBatchProcess: (ids: string[] | null) => void;
   onBatchDownload: (format: ExportFormat, ids: string[] | null) => void;
+  onBatchDelete: (ids: string[]) => void;
   onRefresh: () => void;
   busy: Set<string>;
 }
@@ -86,6 +87,14 @@ export function StudiesTable(p: Props) {
                   XLSX
                 </button>
               </div>
+              <button
+                className="icon-btn icon-btn--danger"
+                onClick={() => p.onBatchDelete(selectedIds)}
+                title="Удалить выбранные"
+                aria-label="Удалить выбранные"
+              >
+                <IconTrash size={15} />
+              </button>
               <button className="link" onClick={() => p.onSelectedChange(new Set())}>
                 Снять выбор
               </button>

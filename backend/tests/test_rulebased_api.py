@@ -203,10 +203,19 @@ def test_overlay_is_rebuilt_after_reprocessing(rb_client: TestClient, samples: P
     r = rb_client.get(f"/api/v1/studies/{sid}/images/{image_id}/overlay")
     assert r.status_code == 200
     assert r.headers["cache-control"] == "no-cache"
-    cached = get_settings().data_dir / "previews" / sid / f"{image_id}_overlay.png"
+    from app.services.overlay import OVERLAY_VERSION
+
+    cached = get_settings().data_dir / "previews" / sid / f"{image_id}_overlay_v{OVERLAY_VERSION}.png"
     assert cached.exists()
 
     rb_client.post(f"/api/v1/studies/{sid}/process")
     wait_done(rb_client, sid)
     assert not cached.exists()
     assert rb_client.get(f"/api/v1/studies/{sid}/images/{image_id}/overlay").status_code == 200
+
+
+def test_overlay_labels_use_a_cyrillic_font() -> None:
+    """В шрифте Pillow по умолчанию нет кириллицы — подписи на разметке выходили квадратиками."""
+    from app.services.overlay import label_font
+
+    assert "DejaVu" in getattr(label_font(14), "path", "")

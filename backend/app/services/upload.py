@@ -22,6 +22,7 @@ import shutil
 import uuid
 import zipfile
 from collections import OrderedDict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -97,6 +98,19 @@ def _is_junk(name: str) -> bool:
 
 def _is_document(name: str) -> bool:
     return posixpath.basename(name).lower().endswith(DOCUMENT_SUFFIXES)
+
+
+def _common_dir(names: Iterable[str]) -> str:
+    """Общая папка файлов исследования — она и идёт в path_to_study.
+
+    Обычно снимки лежат в одной папке, и это она. Если исследование разложено по папкам
+    серий (в выгрузке заказчика так у одного исследования из ста), — их общая родительская
+    папка, а не путь к первому файлу. Пусто, если общей папки нет: файлы в корне загрузки.
+    """
+    dirs = {posixpath.dirname(n) for n in names}
+    if not dirs or "" in dirs:
+        return ""
+    return posixpath.commonpath(sorted(dirs))
 
 
 def _sha256(path: Path) -> str:
@@ -355,6 +369,13 @@ class UploadService:
             out.rejected.extend({"filename": x.cand.original_name, "reason": reason} for x in [*items, *invalid])
             return None
         unique = self._unique(items, out)
+        # Большая папка приходит частями, и серии одного исследования могут попасть в разные
+        # части: путь расширяется до общей папки. Если общей нет (снимки из другого места),
+        # остаётся прежний.
+        if study.source_path and unique:
+            merged = _common_dir([posixpath.join(study.source_path, "_"), *(v.cand.original_name for v in unique)])
+            if merged:
+                study.source_path = merged
         rel_dir = Path(study.storage_dir)
         (self.settings.data_dir / rel_dir).mkdir(parents=True, exist_ok=True)
         for v in unique:
@@ -431,8 +452,7 @@ class UploadService:
         first = unique[0]
         study_id, rel_dir, _ = self._new_study_dir()
 
-        dirs = {posixpath.dirname(v.cand.original_name) for v in unique}
-        common_dir = next(iter(dirs)) if len(dirs) == 1 else ""
+        common_dir = _common_dir(v.cand.original_name for v in unique)
         source_path = common_dir or first.cand.original_name
         first_base = posixpath.basename(first.cand.original_name)
         if common_dir and not common_dir.lower().endswith(".zip"):

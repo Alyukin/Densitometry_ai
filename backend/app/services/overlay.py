@@ -7,11 +7,27 @@
 
 from __future__ import annotations
 
+import logging
+from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from app.services.dicom import render_preview_png
+
+logger = logging.getLogger(__name__)
+
+# Меняется, когда меняется отрисовка: PNG кэшируются на диске, и без версии в имени файла
+# старая картинка показывалась бы до повторной обработки.
+OVERLAY_VERSION = 2
+
+# В шрифте Pillow по умолчанию нет кириллицы — подписи выходили квадратиками. В образе
+# Docker ставится fonts-dejavu-core (backend/Dockerfile), в Linux DejaVu обычно уже есть.
+FONT_PATHS = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Debian, Ubuntu
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",  # Fedora, Alpine
+    "DejaVuSans.ttf",  # в путях поиска шрифтов системы
+)
 
 COLOR_AXIS = (255, 80, 80)
 COLOR_CONTOUR = (80, 200, 255)
@@ -23,6 +39,27 @@ COLOR_FIELD = (90, 110, 140)
 
 def _scale(pt: list[float] | tuple[float, float], k: float) -> tuple[float, float]:
     return pt[0] * k, pt[1] * k
+
+
+@lru_cache(maxsize=8)
+def label_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Шрифт с кириллицей для подписей; без него — шрифт по умолчанию и предупреждение."""
+    for path in FONT_PATHS:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    logger.warning("Нет шрифта DejaVu: подписи на разметке будут без русских букв")
+    return ImageFont.load_default()
+
+
+def _label(d: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, color: tuple, scale: int) -> None:
+    """Подпись слева направо от точки, по центру по высоте, с тёмной обводкой — читается на кости."""
+    font = label_font(max(11, round(4.5 * scale)))
+    try:
+        d.text(xy, text, fill=color, font=font, anchor="lm", stroke_width=max(1, scale // 2), stroke_fill=(0, 0, 0))
+    except (ValueError, TypeError):  # растровый шрифт по умолчанию не умеет anchor и обводку
+        d.text((xy[0], xy[1] - 6), text, fill=color, font=font)
 
 
 def render_overlay_png(dicom_path: Path, overlay: dict, scale: int = 3) -> bytes:
@@ -63,14 +100,14 @@ def render_overlay_png(dicom_path: Path, overlay: dict, scale: int = 3) -> bytes
             x, y = _scale(pt, k)
             r = 4 * scale / 3
             d.ellipse([x - r, y - r, x + r, y + r], outline=COLOR_LANDMARK, width=2)
-            d.text((x + r + 2, y - 6), label, fill=COLOR_LANDMARK)
+            _label(d, (x + r + 3, y), label, COLOR_LANDMARK, scale)
 
     lt = overlay.get("lesser_trochanter")
     if lt:
         x, y = _scale(lt, k)
         r = 5 * scale / 3
         d.ellipse([x - r, y - r, x + r, y + r], outline=COLOR_LT, width=2)
-        d.text((x + r + 2, y - 6), "малый вертел", fill=COLOR_LT)
+        _label(d, (x + r + 3, y), "малый вертел", COLOR_LT, scale)
 
     for box in overlay.get("foreign") or []:
         y0, y1, x0, x1 = box

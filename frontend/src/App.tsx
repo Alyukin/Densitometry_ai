@@ -3,7 +3,6 @@ import { ApiError, api, downloadFile } from "./api/client";
 import type { ExportFormat, Health, StudySummary, UploadResponse } from "./api/types";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Header } from "./components/Header";
-import { IconInfo } from "./components/Icons";
 import { StudiesTable, type Filter } from "./components/StudiesTable";
 import { StudyDrawer } from "./components/StudyDrawer";
 import { useToast } from "./components/Toast";
@@ -135,6 +134,27 @@ export default function App() {
     await refresh();
   };
 
+  // Удаление выбранных сразу, без подтверждения, по запросу на исследование: те, что сейчас
+  // обрабатываются, сервер не удаляет (409) — они остаются выбранными, остальные удаляются
+  const deleteMany = async (ids: string[]) => {
+    if (!ids.length) return;
+    let removed = 0;
+    const errors: string[] = [];
+    await withBusy(ids, async () => {
+      for (const id of ids) {
+        try {
+          await api.remove(id);
+          removed += 1;
+        } catch (e) {
+          errors.push((e as ApiError).message);
+        }
+      }
+    });
+    if (removed) toast.success(`Удалено: ${removed} ${pluralRu(removed, "исследование", "исследования", "исследований")}`);
+    if (errors.length) toast.error(`Не удалено: ${errors.length} — ${[...new Set(errors)].join("; ")}`);
+    await refresh();
+  };
+
   const onUploaded = async (res: UploadResponse, autoProcess: boolean) => {
     await refresh();
     if (autoProcess && res.studies.length) {
@@ -150,14 +170,6 @@ export default function App() {
       <Header health={health} healthError={healthError} />
 
       <main className="container">
-        <div className="banner">
-          <IconInfo size={16} />
-          <span>
-            Сервис проверяет качество укладки и разметки исследования. Это вспомогательный контроль, а не
-            медицинское заключение: решение остаётся за специалистом.
-          </span>
-        </div>
-
         <div className="layout">
           <UploadPanel onUploaded={onUploaded} />
           <StudiesTable
@@ -174,15 +186,12 @@ export default function App() {
             onDownload={download}
             onBatchProcess={batchProcess}
             onBatchDownload={batchDownload}
+            onBatchDelete={deleteMany}
             onRefresh={refresh}
             busy={busy}
           />
         </div>
       </main>
-
-      <footer className="footer container">
-        Densitometry AI {health ? `v${health.version}` : ""} · локальный сервис · данные не покидают ваш контур
-      </footer>
 
       {activeId && (
         <StudyDrawer
